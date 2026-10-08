@@ -155,7 +155,7 @@ class Api:
 
     # -------------------------------------------------------------- jobs
 
-    def preview(self, url: str) -> dict[str, Any]:
+    def preview(self, url: str, prefer_h264: bool = True) -> dict[str, Any]:
         """Extract title/thumbnail/formats without downloading (C/E).
 
         pywebview's bridge runs js_api methods synchronously in a background
@@ -172,7 +172,7 @@ class Api:
             return {"ok": False, "error": "请输入链接"}
         engine = YtDlpEngine(self._manager.settings)
         try:
-            info = asyncio.run(engine.preview(url))
+            info = asyncio.run(engine.preview(url, prefer_h264=bool(prefer_h264)))
             info["ok"] = True
             return info
         except Exception as exc:

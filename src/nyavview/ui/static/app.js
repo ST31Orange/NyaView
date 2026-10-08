@@ -331,12 +331,12 @@ $("downloadUrl").addEventListener("keydown", (e) => {
 
 /* -------- preview (E/C): debounce extraction of title/thumbnail/formats */
 let previewTimer = null;
-$("downloadUrl").addEventListener("input", () => {
+function requestPreview() {
   clearTimeout(previewTimer);
   const url = $("downloadUrl").value.trim();
   if (!url) { $("dlPreview").style.display = "none"; return; }
   previewTimer = setTimeout(() => {
-    api().preview(url).then((res) => {
+    api().preview(url, $("dlQuality").value === "h264").then((res) => {
       if (!res || !res.ok || !res.title) { $("dlPreview").style.display = "none"; return; }
       $("dlPreviewTitle").textContent = res.title;
       const metaBits = [];
@@ -355,7 +355,12 @@ $("downloadUrl").addEventListener("input", () => {
         opts.forEach((f) => {
           const o = document.createElement("option");
           o.value = f.id;
-          const codec = f.vcodec === "av01" ? "AV1" : f.vcodec === "h264" ? "H.264" : (f.vcodec || "").toUpperCase();
+          const vc = String(f.vcodec || "").toLowerCase();
+          let codec;
+          if (vc.startsWith("av01")) codec = "AV1";
+          else if (vc.startsWith("avc")) codec = "H.264";
+          else if (vc.startsWith("hev")) codec = "HEVC";
+          else codec = (f.vcodec || "?").toUpperCase();
           o.textContent = `${f.height ? f.height + "P" : "?"} ${f.fps || ""} · ${codec}`;
           sel.appendChild(o);
         });
@@ -368,7 +373,10 @@ $("downloadUrl").addEventListener("input", () => {
       $("dlPreview").style.display = "flex";
     }).catch(() => { $("dlPreview").style.display = "none"; });
   }, 900);
-});
+}
+$("downloadUrl").addEventListener("input", requestPreview);
+// switching 画质 re-filters the preview format list (H.264 vs AV1/HEVC)
+$("dlQuality").addEventListener("change", requestPreview);
 
 $("dlPreviewClose").addEventListener("click", () => {
   $("dlPreview").style.display = "none";

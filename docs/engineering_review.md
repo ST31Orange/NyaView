@@ -316,6 +316,11 @@ class ProcessTimeoutError(EngineError): ...
    - 受"运行期不得 evaluate_js（死锁）"约束，drop 路径经 **poll 通道**回传：`JobManager.set_pending_drop(target, path)` → `Api.poll()` 返回 `{type:"drop", target, path}` → JS `handleEvent` 更新路径行与 dataset；
    - JS `setupDropZone` 只保留视觉拖拽态 + 乐观路径（`file.path` 为绝对路径时立即显示），权威路径由 poll 事件覆盖。
    - 实测 `num_listeners == 2`（两个拖拽区注册成功），drop→poll→JS 链路正常。51 测试全绿。
+18. **多P下载"只有音频没有视频"（用户报告）**：实测所有下载路径文件都含视频+音频流（选格式/默认最佳/默认H264 均正常）——根因是**播放器兼容性**：下载页"画质"**默认"最佳"**，B站无登录时给 **HEVC (hev1)** 视频流，老播放器（QQ影音等）不支持 HEVC 解码 → 只能解出音频 → 表现为"只有声音没画面"。**修复**：
+   - 下载页"画质"默认改为 **H.264 优先（最兼容）**，"最佳（AV1/HEVC）"需手动选；
+   - `preview()` 加 `prefer_h264` 参数：H.264 模式时**格式列表只显示 AVC 格式**（实测：h264=True → 30032/30016 avc1；h264=False → 30033/30011 hev1），预览下拉与下载模式一致，用户不会选到 HEVC/AV1；
+   - JS 预览下拉编码标签修正（HEVC 显示"HEVC"、H.264 显示"H.264"、AV1 显示"AV1"，原来 HEVC 显示 HEV1、H.264 显示 AVC1 易混淆）；
+   - 切换"画质"下拉会重新拉取预览格式列表。
 
 ---
 

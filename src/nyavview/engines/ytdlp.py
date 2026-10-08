@@ -305,8 +305,14 @@ class YtDlpEngine:
             format_id,
         )
 
-    async def preview(self, url: str) -> dict[str, Any]:
-        """Extract metadata without downloading (C/E: formats, title, thumb)."""
+    async def preview(self, url: str, prefer_h264: bool = True) -> dict[str, Any]:
+        """Extract metadata without downloading (C/E: formats, title, thumb).
+
+        When ``prefer_h264`` is set the format list is filtered to H.264
+        (AVC) video formats only, so the UI picker matches the download's
+        ``prefer_h264`` mode — picking from the list never yields an
+        AV1/HEVC stream the user cannot play.
+        """
         import asyncio as _aio
         import yt_dlp.utils
 
@@ -319,7 +325,7 @@ class YtDlpEngine:
                 audio_only=False,
                 overwrite=False,
                 playlist_items=None,
-                prefer_h264=True,
+                prefer_h264=prefer_h264,
             )
             opts["skip_download"] = True
             with YoutubeDL(opts) as ydl:
@@ -341,12 +347,15 @@ class YtDlpEngine:
                 vcodec = f.get("vcodec") or "audio"
                 if vcodec == "none":
                     continue  # skip audio-only formats in the video list
+                codec = (vcodec or "").split(".")[0].lower()
+                if prefer_h264 and codec != "avc1":
+                    continue  # H.264 mode: only list AVC video formats
                 formats.append(
                     {
                         "id": f.get("format_id"),
                         "height": f.get("height"),
                         "fps": f.get("fps"),
-                        "vcodec": (vcodec or "").split(".")[0],
+                        "vcodec": codec,
                         "ext": f.get("ext"),
                         "filesize": f.get("filesize") or f.get("filesize_approx"),
                     }
