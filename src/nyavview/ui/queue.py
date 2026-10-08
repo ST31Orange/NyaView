@@ -81,6 +81,11 @@ class JobManager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._ids = itertools.count(1)
+        # One-shot "a file/folder was dropped" slot, filled by the pywebview
+        # DOM drop handler (which receives absolute paths) and drained by the
+        # JS frontend via api.poll() — Python→JS evaluate_js would deadlock
+        # while the page polls, so drops travel back through the poll channel.
+        self._pending_drop: Optional[tuple[str, str]] = None
 
     # ------------------------------------------------------------ lifecycle
 
@@ -334,10 +339,20 @@ class JobManager:
 
     # -------------------------------------------------------------- snapshot
 
+    def set_pending_drop(self, target: str, path: str) -> None:
+        """Record an absolute dropped path (from the pywebview DOM drop
+        handler) for the JS frontend to pick up on its next poll."""
+        with self._lock:
+            self._pending_drop = (target, path)
+
     def poll(self) -> list[dict[str, Any]]:
         with self._lock:
             events = list(self._events)
             self._events.clear()
+            if self._pending_drop is not None:
+                target, path = self._pending_drop
+                self._pending_drop = None
+                events.insert(0, {"type": "drop", "target": target, "path": path})
         return events
 
     def list_jobs(self) -> list[dict[str, Any]]:

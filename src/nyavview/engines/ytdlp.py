@@ -127,8 +127,12 @@ class YtDlpEngine:
             ]
         else:
             if format_id:
-                # User picked a specific video format (C): use it with best audio.
-                opts["format"] = f"{format_id}+bestaudio/best"
+                # User picked a specific format from the preview (C). The
+                # preview only shows the FIRST P's formats, so a multi-P
+                # download may not have this format on later P's — use a
+                # yt-dlp fallback chain: picked+bestaudio → picked alone →
+                # best, so each P still downloads with the best available.
+                opts["format"] = f"{format_id}+bestaudio/{format_id}/bestvideo+bestaudio/best"
             else:
                 opts["format"] = "bestvideo+bestaudio/best"
             opts["merge_output_format"] = "mp4"

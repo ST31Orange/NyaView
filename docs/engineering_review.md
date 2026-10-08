@@ -310,6 +310,12 @@ class ProcessTimeoutError(EngineError): ...
    - **配对过滤**：只保留"自己拥有 m4s 配对"的根——`_has_m4s_pair` 排除嵌套在另一个 entry.json 文件夹内的媒体（多P缓存的元数据父级自动跳过，其各分P子文件夹单独转换，**既全部转换、又不重复转 P1**）；
    - 实测 6 种结构全部识别：同文件夹多个 / 套一层 / 套两层 / 真实布局 `cid/64/video.m4s` / 真实布局再套一层 / 多P父元数据+2分P。
    - 50 个测试全绿（新增 5 个缓存识别测试）。
+16. **多P下载报错 `Requested format is not available`（用户报告）**：预览只显示**第 1 P** 的格式，多P下载时把 P1 的 format_id 强制应用到所有 P，P2+ 没有该格式就崩。**修复**：`_opts` 的 format 改为 yt-dlp 的 `/` 回退链——`{format_id}+bestaudio/{format_id}/bestvideo+bestaudio/best`，每个 P 都能用最佳可用格式下载。
+17. **拖拽文件夹只得到相对路径（用户报告）**：pywebview 的全路径注入依赖 `_dnd_state['num_listeners'] > 0`（`edgechromium.py` 的 `FilesDropped` 分支），只有通过 **pywebview DOM 事件 API**（`window.dom`）注册的 drop 处理器才会计数；普通 `addEventListener('drop')` 拿到的 `file.path` 是相对路径。**修复**：
+   - Python 侧 `_setup_drop_handlers(window, manager)` 在 `webview.start(func)` 回调里用 `window.dom.get_element('#cvDropZone'/'#biliDropZone').events.drop += handler` 注册，拿到 `event['dataTransfer']['files'][0]['pywebviewFullPath']`（绝对路径）；
+   - 受"运行期不得 evaluate_js（死锁）"约束，drop 路径经 **poll 通道**回传：`JobManager.set_pending_drop(target, path)` → `Api.poll()` 返回 `{type:"drop", target, path}` → JS `handleEvent` 更新路径行与 dataset；
+   - JS `setupDropZone` 只保留视觉拖拽态 + 乐观路径（`file.path` 为绝对路径时立即显示），权威路径由 poll 事件覆盖。
+   - 实测 `num_listeners == 2`（两个拖拽区注册成功），drop→poll→JS 链路正常。51 测试全绿。
 
 ---
 

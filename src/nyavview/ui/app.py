@@ -86,6 +86,39 @@ def _install_debug_hook() -> None:
         _log(f"  get_app_root failed: {exc!r}")
 
 
+def _setup_drop_handlers(window: Any, manager: JobManager) -> None:
+    """Register pywebview DOM drop handlers for the convert drop zones.
+
+    Plain JS ``addEventListener('drop')`` receives only a relative path for
+    files/folders dropped into a WebView2 (the full-path injection requires
+    ``_dnd_state['num_listeners'] > 0``, which only happens when a drop
+    handler is registered through pywebview's DOM event API). These handlers
+    run on the Python side with the absolute ``pywebviewFullPath`` and hand it
+    to the JS frontend via the poll channel (safe: no Python→JS evaluate_js,
+    which would deadlock while the page polls).
+    """
+
+    def _make_handler(target: str):
+        def _handle(event: dict) -> None:
+            try:
+                path = None
+                files = (event.get("dataTransfer") or {}).get("files") or []
+                for f in files:
+                    path = f.get("pywebviewFullPath") or f.get("path") or path
+                if path:
+                    manager.set_pending_drop(target, str(path))
+            except Exception as exc:  # defensive: never crash the bridge thread
+                manager.set_pending_drop(target, "")
+
+        return _handle
+
+    try:
+        window.dom.get_element("#cvDropZone").events.drop += _make_handler("cv")
+        window.dom.get_element("#biliDropZone").events.drop += _make_handler("bili")
+    except Exception as exc:  # noqa: BLE001 - DOM setup is best-effort
+        print(f"[drop] failed to register DOM drop handlers: {exc!r}")
+
+
 def main() -> None:
     _install_debug_hook()
     # Start from the user-level settings (~/.nyavview.toml) when present.
@@ -102,8 +135,12 @@ def main() -> None:
         background_color="#FAF9F5",
     )
     api._window = window
+
+    def _on_ready() -> None:
+        _setup_drop_handlers(window, manager)
+
     try:
-        webview.start(debug=False)
+        webview.start(_on_ready, debug=False)
     finally:
         manager.stop()
 

@@ -63,6 +63,15 @@ def test_opts_prefer_h264_default_and_off() -> None:
     assert "format_sort" not in best
 
 
+def test_opts_format_id_has_fallback_chain() -> None:
+    """A picked format must fall back gracefully on later P's (multi-P): the
+    preview only shows P1's formats, so P2+ may lack the picked format id.
+    yt-dlp format '/'-chains try picked+bestaudio -> picked -> best."""
+    engine = _engine()
+    opts = engine._opts(Path("d"), audio_only=False, overwrite=False, format_id="100026")
+    assert opts["format"] == "100026+bestaudio/100026/bestvideo+bestaudio/best"
+
+
 def test_hook_emits_progress_event() -> None:
     events = []
     engine = YtDlpEngine(Settings(), on_progress=events.append)

@@ -144,6 +144,21 @@ function upsertJob(job) {
 /* ---------------------------------------------------------- events */
 
 function handleEvent(ev) {
+  // File/folder drop (delivered via poll): the absolute path comes from the
+  // pywebview DOM drop handler; plain JS drops only carry relative paths.
+  if (ev.type === "drop") {
+    if (ev.path) {
+      if (ev.target === "cv") {
+        $("cvFilePath").textContent = ev.path;
+        $("cvFilePath").dataset.file = ev.path;
+      } else if (ev.target === "bili") {
+        $("biliPath").textContent = ev.path;
+        $("biliPath").dataset.folder = ev.path;
+      }
+    }
+    renderQueue();
+    return;
+  }
   // Ensure the job exists: events may arrive before we ever saw this job
   // (e.g. submitted in this session), so create it from the event payload.
   let job = state.jobs.get(ev.jobId);
@@ -487,9 +502,13 @@ function loadSettings() {
   });
 }
 
-/* -------- drag & drop (B): drop files / folders onto the convert cards */
+/* -------- drag & drop (B): drop files / folders onto the convert cards
+   NOTE: the absolute path arrives through api.poll() as a {type:"drop"}
+   event (set by the Python-side pywebview DOM drop handler). The plain JS
+   drop below only manages the visual state and an optimistic path when the
+   File happens to carry an absolute one. */
 
-function setupDropZone(zoneId, onPath) {
+function setupDropZone(zoneId) {
   const zone = $(zoneId);
   if (!zone) return;
   ["dragenter", "dragover"].forEach((evt) =>
@@ -500,18 +519,23 @@ function setupDropZone(zoneId, onPath) {
   );
   zone.addEventListener("drop", (e) => {
     const files = e.dataTransfer && e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
-    if (files.length) onPath(files[0].path || files[0].name);
+    if (files.length) {
+      const p = files[0].pywebviewFullPath || files[0].path;
+      if (p && /^[A-Za-z]:[\\/]/.test(p)) {
+        if (zone.id === "cvDropZone") {
+          $("cvFilePath").textContent = p;
+          $("cvFilePath").dataset.file = p;
+        } else {
+          $("biliPath").textContent = p;
+          $("biliPath").dataset.folder = p;
+        }
+      }
+    }
   });
 }
 
-setupDropZone("cvDropZone", (p) => {
-  $("cvFilePath").textContent = p;
-  $("cvFilePath").dataset.file = p;
-});
-setupDropZone("biliDropZone", (p) => {
-  $("biliPath").textContent = p;
-  $("biliPath").dataset.folder = p;
-});
+setupDropZone("cvDropZone");
+setupDropZone("biliDropZone");
 
 /* -------- update check (J) -------- */
 
