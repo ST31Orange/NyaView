@@ -57,8 +57,10 @@ def test_opts_prefer_h264_default_and_off() -> None:
     engine = _engine()
     default = engine._opts(Path("d"), audio_only=False, overwrite=False)
     assert default["format_sort"] == ["vcodec:h264"]
+    # prefer_h264=False must OMIT format_sort entirely (never None) —
+    # yt-dlp's FormatSorter does tuple(format_sort) and crashes on None.
     best = engine._opts(Path("d"), audio_only=False, overwrite=False, prefer_h264=False)
-    assert best["format_sort"] is None
+    assert "format_sort" not in best
 
 
 def test_hook_emits_progress_event() -> None:

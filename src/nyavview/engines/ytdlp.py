@@ -93,13 +93,16 @@ class YtDlpEngine:
             "ignoreconfig": True,
             "noprogress": True,  # progress is driven through hooks
             "progress_hooks": [self._hook],
-            # Default: prefer H.264 so the result plays everywhere (Windows
-            # built-in players do not decode AV1/HEVC without codec
-            # extensions). prefer_h264=False keeps yt-dlp's best-quality sort.
-            "format_sort": ["vcodec:h264"] if prefer_h264 else None,
             "concurrent_fragment_downloads": 4,
             "ffmpeg_location": self.settings.resolve_ffmpeg(),
         }
+        # Default: prefer H.264 so the result plays everywhere (Windows
+        # built-in players do not decode AV1/HEVC without codec extensions).
+        # prefer_h264=False keeps yt-dlp's best-quality sort. NOTE: the key
+        # must be OMITTED (not set to None) — yt-dlp's FormatSorter does
+        # tuple(format_sort), which crashes with TypeError on None.
+        if prefer_h264:
+            opts["format_sort"] = ["vcodec:h264"]
         if playlist_items:
             opts["playlist_items"] = playlist_items
         if write_subs:
@@ -301,11 +304,13 @@ class YtDlpEngine:
     async def preview(self, url: str) -> dict[str, Any]:
         """Extract metadata without downloading (C/E: formats, title, thumb)."""
         import asyncio as _aio
+        import yt_dlp.utils
 
-        def _run() -> dict[str, Any]:
+        def _extract(settings: Settings) -> dict[str, Any]:
             from yt_dlp import YoutubeDL
 
-            opts = self._opts(
+            engine = YtDlpEngine(settings)
+            opts = engine._opts(
                 Path("."),
                 audio_only=False,
                 overwrite=False,
@@ -355,5 +360,21 @@ class YtDlpEngine:
                 "playlistCount": len(entries),
                 "formats": list(by_height.values()),
             }
+
+        def _run() -> dict[str, Any]:
+            try:
+                return _extract(self.settings)
+            except yt_dlp.utils.DownloadError as exc:
+                # Browser cookie DB locked (issue #7271): preview only needs
+                # public metadata, so fall back to a no-cookie extraction
+                # instead of surfacing the lock error.
+                if self._is_cookie_error(str(exc)) and (
+                    self.settings.cookies_from_browser or self.settings.cookie_file
+                ):
+                    original = self.settings.model_copy(
+                        update={"cookies_from_browser": None, "cookie_file": None}
+                    )
+                    return _extract(original)
+                raise
 
         return await _aio.to_thread(_run)

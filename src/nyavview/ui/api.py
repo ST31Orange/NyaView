@@ -156,8 +156,15 @@ class Api:
     # -------------------------------------------------------------- jobs
 
     def preview(self, url: str) -> dict[str, Any]:
-        """Extract title/thumbnail/formats without downloading (C/E)."""
-        from nyavview.core.settings import Settings
+        """Extract title/thumbnail/formats without downloading (C/E).
+
+        pywebview's bridge runs js_api methods synchronously in a background
+        thread and JSON-serializes the return value (it does NOT await
+        coroutines), so this stays synchronous: the async engine preview runs
+        on a fresh event loop here, blocking only the bridge thread.
+        """
+        import asyncio
+
         from nyavview.engines.ytdlp import YtDlpEngine
 
         url = (url or "").strip()
@@ -165,7 +172,7 @@ class Api:
             return {"ok": False, "error": "请输入链接"}
         engine = YtDlpEngine(self._manager.settings)
         try:
-            info = engine.preview(url)
+            info = asyncio.run(engine.preview(url))
             info["ok"] = True
             return info
         except Exception as exc:

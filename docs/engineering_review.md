@@ -304,6 +304,12 @@ class ProcessTimeoutError(EngineError): ...
    - **紧凑化**（全局限定）：`.card` 内边距 26px→18px、`.app` 底填充 40px→24px、字段输入 10px→6px、分区边距 14px→6px、区块标题/副标题边距收紧。修复了 `.form-grid-3` 特异性 bug（`.form-grid` 定义在后导致 3 列失效、实际渲染 2 列）。
    - 新增 CSS：`.sub-tabs/.sub-tab/.sub-panel`、`.drop-zone-slim`、`.path-line-inline`、`.hint-line-inline`、`.select-sm`、`.settings-section`、`.form-grid.form-grid-3`。
    - **实测（CDP 视口滚动检查，窗口 1080×780、内容区 743px）**：下载 743 / 转换 743 / 设置 743 / 队列 743 / 日志 743——**全部 FITS，零滚动**（设置页迭代：1190 → 927 → 794 → 743）。子标签切换、3 列网格、4 开关一行均验证正常。
+14. **下载崩溃 `TypeError: 'NoneType' object is not iterable`（用户报告，链接 BV1Gx411w7wU）**：复现定位到 yt-dlp 内部 `yt_dlp/utils/_utils.py:5532` 的 `tuple(self._sort_user)`——当 `format_sort=None` 时 `tuple(None)` 崩溃。**根因**：下载页"画质"下拉默认"最佳"→ `preferH264=false` → 引擎把 `format_sort: None` 传给了 yt-dlp。**修复**：`prefer_h264=False` 时**省略该键**而非传 None（yt-dlp 用默认排序）；实测"最佳"画质下载该链接成功（2.8MB MP4）。另修复 `Api.preview`：pywebview 桥接在后台线程**同步**执行 js_api 并 JSON 序列化返回值（`webview/util.py:_call` 不做 coroutine await），async 方法返回裸 coroutine 无法序列化——改为**同步方法** + `asyncio.run(engine.preview(url))`（阻塞仅在桥接后台线程，UI 不卡）。`preview()` 引擎层加**无 Cookie 回退**：浏览器 cookie 库被锁（#7271）时预览只需公开元数据，自动切换无 Cookie 重试，不再让预览卡报 cookie 错误。
+15. **B站缓存深层识别（用户报告：套一层文件夹就识别不了）**：原 `cache_roots` 只查"所选文件夹自身 + 直接子文件夹"两层。重构为**递归扫描**（深度上限 8）：
+   - 每个"直接含 entry.json 的文件夹"都是候选根，任意深度嵌套（`父/外层/缓存/entry.json`）都能找到；
+   - **配对过滤**：只保留"自己拥有 m4s 配对"的根——`_has_m4s_pair` 排除嵌套在另一个 entry.json 文件夹内的媒体（多P缓存的元数据父级自动跳过，其各分P子文件夹单独转换，**既全部转换、又不重复转 P1**）；
+   - 实测 6 种结构全部识别：同文件夹多个 / 套一层 / 套两层 / 真实布局 `cid/64/video.m4s` / 真实布局再套一层 / 多P父元数据+2分P。
+   - 50 个测试全绿（新增 5 个缓存识别测试）。
 
 ---
 

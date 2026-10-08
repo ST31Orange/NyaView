@@ -56,7 +56,7 @@ def main() -> int:
     ws.close()
 
     ok = (
-        results["cards"] == 6
+        results["cards"] == 5  # 5 cards since the UI refactor (2 convert cards -> 1 with sub-tabs)
         and results["tabs"] == 5
         and results["urlInput"] is True
         and results["api_poll"] == "function"

@@ -246,27 +246,69 @@ class FfmpegTranscoder:
 
     # --------------------------------------------------------------- lookup
 
-    def cache_roots(self, source: Path) -> list[Path]:
-        """Return every Bilibili cache root under ``source``.
+    def cache_roots(self, source: Path, max_depth: int = 8) -> list[Path]:
+        """Return every Bilibili cache root under ``source`` (recursive).
 
-        A cache root is a folder that directly contains ``entry.json``. If
-        ``source`` itself is one, it is returned; otherwise every immediate
-        child folder that is a cache root is returned, so a parent folder with
-        several cache folders converts them all in one pass.
+        A cache root is a folder that directly contains ``entry.json`` plus a
+        ``video.m4s``/``audio.m4s`` pair somewhere in its subtree. The search
+        recurses (bounded by ``max_depth``) so caches nested any number of
+        folders deep are found — e.g. ``parent/outer/缓存/entry.json``. Every
+        matching folder is returned (全部转换、不遗漏), including multi-P caches
+        where a parent holds ``entry.json`` and its per-P subfolders each hold
+        their own. Folders with ``entry.json`` but no media pair (metadata-only
+        parents of a multi-P cache) are skipped, so their per-P subfolders are
+        converted instead of producing a duplicate of the first P.
         """
         source = Path(source).expanduser().resolve()
         if source.is_file():
             raise TranscodeError("cache conversion needs a folder, not a file")
+        roots: list[Path] = []
+
+        def collect(directory: Path, depth: int) -> None:
+            if depth > max_depth:
+                return
+            try:
+                children = sorted(directory.iterdir())
+            except OSError:
+                return
+            for child in children:
+                if not child.is_dir():
+                    continue
+                if (child / "entry.json").is_file():
+                    roots.append(child)
+                collect(child, depth + 1)
+
         if (source / "entry.json").is_file():
-            return [source]
-        roots = [
-            child
-            for child in sorted(source.iterdir())
-            if child.is_dir() and (child / "entry.json").is_file()
-        ]
-        if not roots:
-            raise TranscodeError(f"No Bilibili cache folder found in {source}")
-        return roots
+            roots.append(source)
+        collect(source, 1)
+
+        candidates = sorted(set(roots))
+        valid = [r for r in candidates if self._has_m4s_pair(r)]
+        if not valid:
+            raise TranscodeError(
+                f"No Bilibili cache folder (entry.json + video.m4s) found in {source} "
+                f"(searched up to {max_depth} levels)"
+            )
+        return valid
+
+    @staticmethod
+    def _has_m4s_pair(root: Path) -> bool:
+        """True when ``root`` owns an m4s pair: a ``video.m4s`` with a sibling
+        ``audio.m4s`` that is NOT inside a nested ``entry.json`` folder (media
+        under another cache folder belongs to that cache root, e.g. the per-P
+        subfolders of a multi-P cache)."""
+        for video in root.rglob("video.m4s"):
+            if (video.parent / "audio.m4s").is_file():
+                ancestor = video.parent
+                nested = False
+                while ancestor != root:
+                    if (ancestor / "entry.json").is_file():
+                        nested = True
+                        break
+                    ancestor = ancestor.parent
+                if not nested:
+                    return True
+        return False
 
     @staticmethod
     def _find_m4s_pair(root: Path) -> M4sPair:
