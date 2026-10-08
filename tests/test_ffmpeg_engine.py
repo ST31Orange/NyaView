@@ -43,7 +43,17 @@ def test_build_args_uses_preset_and_bitrate() -> None:
     engine = FfmpegTranscoder(Settings(ffmpeg_path=Path("ffmpeg"), video_preset="fast", audio_bitrate="128k"))
     args = engine._build_args([Path("a.mkv")], Path("o.mp4"), audio_mode="encode", overwrite=False)
     assert args[args.index("-preset") + 1] == "fast"
-    assert args[args.index("-b:a") + 1] == "128k"
+
+
+def test_build_args_max_compatibility() -> None:
+    """Output must be forced to 8-bit 4:2:0 High profile at CRF 20 so old
+    players (QQ影音) accept it — 10-bit/4:4:4 sources would break them."""
+    args = _engine()._build_args(
+        [Path("a.mkv")], Path("o.mp4"), audio_mode="encode", overwrite=False
+    )
+    assert args[args.index("-pix_fmt") + 1] == "yuv420p"
+    assert args[args.index("-profile:v") + 1] == "high"
+    assert args[args.index("-crf") + 1] == "20"
 
 
 def test_cache_roots_detects_direct_root(tmp_path: Path) -> None:

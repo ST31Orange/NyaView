@@ -278,6 +278,7 @@ class ProcessTimeoutError(EngineError): ...
 9. **B 站下载"只有音频没有视频" + 转换出的 MP4"文件无效"（用户报告，根因见下）**：两个症状同源——B 站无登录时 yt-dlp 常选到 **AV1（av01）编码**的视频流，Windows 自带播放器（照片/电影和电视）不支持 AV1，表现为"只有音频"；而转换若**中途被中断**（取消/关闭应用），ffmpeg 子进程被杀后会在目标路径留下**残缺的 .mp4**（看起来大小正常但 moov 缺失/损坏，打不开）。修复两点：
    - **下载优先 H.264**：`_opts` 增加 `format_sort: ["vcodec:h264"]`，让 yt-dlp 在同等质量下优先选 H.264，下载结果 Windows 全兼容（实测同一视频从 av1 变为 h264，播放器可直开）。
    - **转换原子写入**：`FfmpegTranscoder._transcode_to` 先编码到 `.<stem>.part-<pid>.mp4` 临时文件，成功后才 `os.replace` 改名为最终文件；任何中断只留下临时文件（并清理），最终 `.mp4` 绝不残缺。实测：转换输出 decode rc=0、无残留临时文件。
+10. **旧播放器（QQ 影音）报"文件无效"而其他播放器正常（用户报告）**：用户手测确认转换出的 H.264 MP4 在 QQ 影音（基于约 2012 年 FFmpeg 的播放器）打不开、其他播放器正常，期望输出与其手动用 `ffmpeg -i video.m4s -i audio.m4s -c:v libx264 -crf 20 -c:a copy -movflags +faststart` 合成的文件一致（全播放器可播）。排查：该文件本身 8-bit yuv420p / High / 1080p30 / faststart，结构标准（ftyp→moov→mdat），ffmpeg 可完整解码——问题属于旧解码器对输出参数挑剔。**兼容性加固**：`_build_args` 现强制 `-pix_fmt yuv420p`（源为 10-bit/4:4:4 时强制转 8-bit 4:2:0，这是旧播放器最常拒绝的点）、`-profile:v high`、`-crf 20`（新增 `Settings.video_crf`，与用户验证过的良好文件一致）；实测 10-bit 源转换后输出确为 8-bit yuv420p High。B 站缓存合流路径本就 `-c:a copy`，与用户手测命令一致。
 
 ---
 

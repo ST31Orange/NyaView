@@ -105,6 +105,13 @@ class FfmpegTranscoder:
         audio_map = "1:a?" if len(inputs) > 1 else "0:a?"
         args += ["-map", "0:v?", "-map", audio_map]
         args += ["-c:v", "libx264", "-preset", self.settings.video_preset]
+        # Maximum-compatibility H.264: force 8-bit 4:2:0 (10-bit / 4:4:4
+        # sources would otherwise be preserved and break old players such as
+        # QQ影音), keep High profile, and use the known-good constant quality
+        # (CRF 20 matches the manually merged Bilibili DASH file that plays in
+        # every player).
+        args += ["-pix_fmt", "yuv420p", "-profile:v", "high"]
+        args += ["-crf", str(self.settings.video_crf)]
         args += ["-c:a", "aac" if audio_mode == "encode" else "copy"]
         if audio_mode == "encode":
             args += ["-b:a", self.settings.audio_bitrate]
