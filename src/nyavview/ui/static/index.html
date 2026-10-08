@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NyaView · 视频下载与转换</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- ============ Header ============ -->
+    <header class="header">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">N</div>
+        <div class="brand-text">
+          <h1 class="brand-name">NyaView</h1>
+          <span class="brand-tagline">视频下载 · 格式转换</span>
+        </div>
+      </div>
+      <div class="runtime-badge" id="runtimeBadge" title="运行时信息">
+        <span class="dot"></span>
+        <span id="runtimeText">正在初始化…</span>
+      </div>
+    </header>
+
+    <!-- ============ Tabs ============ -->
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-panel="download" role="tab">下载</button>
+      <button class="tab" data-panel="convert" role="tab">转换</button>
+      <button class="tab" data-panel="queue" role="tab">队列 <span class="tab-count" id="queueCount">0</span></button>
+      <button class="tab" data-panel="log" role="tab">日志</button>
+      <button class="tab" data-panel="settings" role="tab">设置</button>
+    </nav>
+
+    <!-- ============ Panels ============ -->
+    <main class="content">
+
+      <!-- -------- Download -------- -->
+      <section class="panel active" id="panel-download" data-panel="download">
+        <div class="card hero-card">
+          <h2 class="card-title">下载视频</h2>
+          <p class="card-sub">粘贴链接，回车即下。支持 Bilibili、YouTube 及 yt-dlp 支持的所有站点。</p>
+          <div class="url-row">
+            <input id="downloadUrl" class="url-input" type="text"
+                   placeholder="粘贴视频链接，例如 https://www.bilibili.com/video/BVxxxxxx" spellcheck="false" />
+            <button id="downloadBtn" class="btn btn-primary">开始下载</button>
+          </div>
+          <div class="option-row">
+            <label class="toggle">
+              <input type="checkbox" id="dlAudioOnly" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">仅音频（M4A）</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="dlOverwrite" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">覆盖已存在</span>
+            </label>
+            <span class="spacer"></span>
+            <label class="field-label" for="dlDir">保存到</label>
+            <button id="dlDirPick" class="btn btn-ghost path-pick">选择目录</button>
+          </div>
+          <div class="path-line" id="dlDirPath">未选择（使用默认目录）</div>
+          <div class="option-row">
+            <label class="field-label" for="dlCookies">Cookie</label>
+            <select id="dlCookies" class="select">
+              <option value="">不使用</option>
+              <option value="edge">从浏览器读取（Edge）</option>
+              <option value="chrome">从浏览器读取（Chrome）</option>
+              <option value="firefox">从浏览器读取（Firefox）</option>
+              <option value="file">使用 Cookie 文件…</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- -------- Convert -------- -->
+      <section class="panel" id="panel-convert" data-panel="convert">
+        <div class="grid-2">
+          <div class="card">
+            <h2 class="card-title">本地视频 → MP4</h2>
+            <p class="card-sub">把任意格式（MKV / MOV / AVI / FLV…）重编码为兼容性最好的 H.264 + AAC MP4。</p>
+            <button id="cvPickFile" class="btn btn-ghost btn-block">选择视频文件</button>
+            <div class="path-line" id="cvFilePath">未选择文件</div>
+            <div class="option-row">
+              <label class="field-label" for="cvPreset">编码预设</label>
+              <select id="cvPreset" class="select">
+                <option value="medium" selected>medium（平衡）</option>
+                <option value="fast">fast（更快）</option>
+                <option value="slow">slow（更小）</option>
+                <option value="veryfast">veryfast（最快）</option>
+              </select>
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="cvBitrate">音频码率</label>
+              <select id="cvBitrate" class="select">
+                <option value="128k">128 kbps</option>
+                <option value="192k" selected>192 kbps（推荐）</option>
+                <option value="256k">256 kbps</option>
+                <option value="320k">320 kbps</option>
+              </select>
+              <label class="toggle">
+                <input type="checkbox" id="cvOverwrite" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">覆盖</span>
+              </label>
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="cvDir">输出到</label>
+              <button id="cvDirPick" class="btn btn-ghost path-pick">选择目录</button>
+            </div>
+            <div class="path-line" id="cvDirPath">未选择（使用默认目录）</div>
+            <button id="cvStart" class="btn btn-primary btn-block">开始转换</button>
+          </div>
+
+          <div class="card">
+            <h2 class="card-title">Bilibili 缓存 → MP4</h2>
+            <p class="card-sub">把客户端缓存的 <code>entry.json + video.m4s + audio.m4s</code> 合并为单个 MP4，视频重编码、音频直拷。</p>
+            <button id="biliPickFolder" class="btn btn-ghost btn-block">选择缓存文件夹</button>
+            <div class="path-line" id="biliPath">未选择文件夹（需包含 entry.json）</div>
+            <div class="option-row">
+              <label class="field-label" for="biliConcurrent">并行任务</label>
+              <select id="biliConcurrent" class="select">
+                <option value="1">1</option>
+                <option value="2" selected>2（推荐）</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+              </select>
+              <label class="toggle">
+                <input type="checkbox" id="biliOverwrite" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">覆盖</span>
+              </label>
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="biliDir">输出到</label>
+              <button id="biliDirPick" class="btn btn-ghost path-pick">选择目录</button>
+            </div>
+            <div class="path-line" id="biliDirPath">未选择（使用默认目录）</div>
+            <button id="biliStart" class="btn btn-primary btn-block">开始转换</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- -------- Queue -------- -->
+      <section class="panel" id="panel-queue" data-panel="queue">
+        <div class="card">
+          <div class="queue-head">
+            <h2 class="card-title">任务队列</h2>
+            <button id="clearFinished" class="btn btn-ghost btn-sm">清除已完成</button>
+          </div>
+          <div id="queueList" class="queue-list"></div>
+          <div id="queueEmpty" class="empty-state">
+            <div class="empty-icon">◎</div>
+            <p>还没有任务。去「下载」或「转换」页添加一个吧。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- -------- Log -------- -->
+      <section class="panel" id="panel-log" data-panel="log">
+        <div class="card">
+          <div class="queue-head">
+            <h2 class="card-title">运行日志</h2>
+            <button id="clearLog" class="btn btn-ghost btn-sm">清空</button>
+          </div>
+          <div id="logView" class="log-view"></div>
+        </div>
+      </section>
+
+      <!-- -------- Settings -------- -->
+      <section class="panel" id="panel-settings" data-panel="settings">
+        <div class="card">
+          <h2 class="card-title">设置</h2>
+          <p class="card-sub">保存到 <code>~/.nyavview.toml</code>，与命令行共用同一套配置。</p>
+          <div class="form-grid">
+            <label class="form-field">
+              <span>默认下载目录</span>
+              <input type="text" id="setDownloadDir" placeholder="downloads" />
+            </label>
+            <label class="form-field">
+              <span>默认转换目录</span>
+              <input type="text" id="setConvertedDir" placeholder="converted" />
+            </label>
+            <label class="form-field">
+              <span>音频码率</span>
+              <input type="text" id="setBitrate" placeholder="192k" />
+            </label>
+            <label class="form-field">
+              <span>编码预设</span>
+              <select id="setPreset" class="select">
+                <option value="veryfast">veryfast</option>
+                <option value="fast">fast</option>
+                <option value="medium" selected>medium</option>
+                <option value="slow">slow</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span>最大并行任务</span>
+              <input type="number" id="setConcurrent" min="1" max="8" value="2" />
+            </label>
+            <label class="form-field">
+              <span>浏览器 Cookie</span>
+              <select id="setCookies" class="select">
+                <option value="">不使用</option>
+                <option value="edge">Edge</option>
+                <option value="chrome">Chrome</option>
+                <option value="firefox">Firefox</option>
+              </select>
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button id="settingsSave" class="btn btn-primary">保存设置</button>
+            <span id="settingsMsg" class="settings-msg"></span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span id="footerInfo">NyaView · 基于 yt-dlp 与 FFmpeg</span>
+      <span id="footerStats"></span>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

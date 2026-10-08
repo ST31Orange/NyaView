@@ -84,5 +84,11 @@ async def run_process(
         await asyncio.gather(out_task, err_task, return_exceptions=True)
         await proc.wait()
         raise ProcessTimeoutError(strings, timeout) from None
+    except asyncio.CancelledError:
+        # UI cancel path: kill the child so it cannot outlive the task.
+        proc.kill()
+        await asyncio.gather(out_task, err_task, return_exceptions=True)
+        await proc.wait()
+        raise
     returncode = await proc.wait()
     return RunResult(strings, "".join(out_sink), "".join(err_sink), returncode or 0)

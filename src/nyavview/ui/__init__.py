@@ -1,0 +1,1 @@
+"""NyaView desktop UI package."""
