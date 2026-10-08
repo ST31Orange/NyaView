@@ -10,7 +10,7 @@ from pathlib import Path
 
 import webview
 
-from nyavview.ui.api import Api, APP_NAME
+from nyavview.ui.api import Api, APP_NAME, load_user_settings
 from nyavview.ui.queue import JobManager
 
 
@@ -21,7 +21,8 @@ def resource_path(relative: str) -> str:
 
 
 def main() -> None:
-    manager = JobManager()
+    # Start from the user-level settings (~/.nyavview.toml) when present.
+    manager = JobManager(settings=load_user_settings())
     manager.start()
     api = Api(manager)
     window = webview.create_window(
