@@ -248,6 +248,26 @@ class ProcessTimeoutError(EngineError): ...
 - **任务队列**：后台独立 asyncio 事件循环运行任务；状态机 `pending → running → done/error/cancelled`；支持取消（yt-dlp 通过 hook 抛 `DownloadCancelled`，ffmpeg 通过杀子进程）。
 - **EXE**：PyInstaller 打包，内嵌 `imageio-ffmpeg` 自带的 gyan.dev ffmpeg 7.1（已确认含 `libx264` + `aac`），yt-dlp 用 Python 包形式内嵌，因此**用户机器无需安装 ffmpeg / yt-dlp**。输出 `dist/NyaView/`（onedir）与单文件 `dist/NyaView.exe`。
 
+### 5.1 已验证结果（本机实测）
+
+| 验证项 | 结果 |
+|---|---|
+| 单元测试 | 34 项全绿（`uv run pytest -q`） |
+| CLI `--help` / 转码 | 正常 |
+| 本地 MKV → MP4 转码（真实 ffmpeg） | 成功，进度事件（running→finished）与百分比正确 |
+| Bilibili 缓存合并（真实 m4s） | 成功，按 `entry.json` 标题命名 |
+| Bilibili 视频下载（真实链接） | 成功：`【官方 MV】Never Gonna Give You Up…mp4` |
+| 桌面 UI 渲染 | 真实窗口：标题、6 卡片、5 标签、品牌、桥接均正常 |
+| 冻结 EXE（onedir `dist/NyaView/NyaView.exe`） | 启动成功，窗口标题正确，18 个 WebView2 渲染进程 |
+| 冻结 EXE（onefile `dist/NyaView.exe`，53MB） | 启动成功，UI 渲染正常 |
+| pywebview 6.2.1 关闭时 stderr 噪声 | 仅关闭时出现（运行时无影响），`--noconsole` GUI 不可见 |
+
+### 5.2 过程中发现并修复的设计点
+
+1. **JS↔Python 桥接死锁**：页面持续轮询 `api.poll()` 时，若 Python 侧再调 `window.evaluate_js` 会桥接重入死锁。因此本应用**一律用"JS 轮询 Python"方向**取事件，绝不在运行期从 Python 推 JS（自测脚本 `selftest_ui.py` 因此改用 `?selftest=1` 让页面主动上报 DOM 统计，而非 `evaluate_js`）。
+2. **PyInstaller 惰性导入陷阱**：`yt_dlp` 是在 `YtDlpEngine._run()` 内惰性导入的，静态分析不可见，必须在 spec 的 `hiddenimports` 显式加入，否则 EXE 下载必然 `ImportError`。
+3. **per-job 选项透传**：UI 里每任务可选的编码预设/码率/并行数/Cookie 等，需按任务克隆一份 `Settings`（`model_copy`）下发引擎，否则会被静默忽略。
+
 ---
 
 ## 6. 所需工具清单（已就绪 / 需用户配合）
