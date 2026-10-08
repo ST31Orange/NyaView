@@ -1,8 +1,20 @@
-from pathlib import Path
+"""Thin facade exposing download/convert operations to any frontend.
 
-from nyavview.engines import FfmpegTranscoder
-from nyavview.engines import YtDlpEngine
+CLI, desktop UI, and future REST surfaces all call these functions; nothing
+else needs to know about the engines. ``on_progress`` is an optional callback
+receiving :class:`~nyavview.core.events.ProgressEvent` instances.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Callable, Optional
+
+from nyavview.core.events import ProgressEvent
 from nyavview.core.settings import Settings
+from nyavview.engines import FfmpegTranscoder, YtDlpEngine
+
+ProgressCallback = Callable[[ProgressEvent], None]
 
 
 async def download_url(
@@ -12,8 +24,9 @@ async def download_url(
     *,
     audio_only: bool,
     overwrite: bool,
+    on_progress: Optional[ProgressCallback] = None,
 ) -> Path:
-    return await YtDlpEngine(settings).download(
+    return await YtDlpEngine(settings, on_progress=on_progress).download(
         url,
         destination,
         audio_only=audio_only,
@@ -27,8 +40,9 @@ async def transcode_local_file(
     destination_dir: Path,
     *,
     overwrite: bool,
+    on_progress: Optional[ProgressCallback] = None,
 ) -> Path:
-    return await FfmpegTranscoder(settings).transcode(
+    return await FfmpegTranscoder(settings, on_progress=on_progress).transcode(
         source,
         destination_dir,
         overwrite=overwrite,
@@ -41,8 +55,9 @@ async def transcode_bilibili_cache(
     destination_dir: Path,
     *,
     overwrite: bool,
+    on_progress: Optional[ProgressCallback] = None,
 ) -> list[Path]:
-    return await FfmpegTranscoder(settings).transcode_bilibili_cache(
+    return await FfmpegTranscoder(settings, on_progress=on_progress).transcode_bilibili_cache(
         source,
         destination_dir,
         overwrite=overwrite,
