@@ -15,7 +15,7 @@ a = Analysis(
     pathex=[str(ROOT / "src")],
     binaries=[],
     datas=[
-        (str(ROOT / "src" / "nyavview" / "ui" / "static"), "nyavview/ui/static"),
+        (str(ROOT / "src" / "nyavview" / "ui" / "static"), "static"),
         (str(ROOT / "assets" / "nyavview.ico"), "."),
     ],
     hiddenimports=[
