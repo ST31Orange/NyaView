@@ -409,6 +409,12 @@ body {
   word-break: break-all;
 }
 
+.hint-line {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
 /* ============================ Queue ============================ */
 
 .queue-head {

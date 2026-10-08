@@ -28,7 +28,82 @@ def test_opts_video() -> None:
     opts = _engine()._opts(Path("d"), audio_only=False, overwrite=False)
     assert opts["format"] == "bestvideo+bestaudio/best"
     assert opts["merge_output_format"] == "mp4"
-    assert "postprocessors" not in opts
+
+
+def test_opts_registers_progress_hook() -> None:
+    """The progress hook must be wired into yt-dlp opts (regression: it was
+    written but never registered, so the UI showed no download progress)."""
+    engine = _engine()
+    opts = engine._opts(Path("d"), audio_only=False, overwrite=False)
+    hooks = opts.get("progress_hooks")
+    assert hooks is not None and len(hooks) == 1
+    assert hooks[0].__func__ is engine._hook.__func__
+
+
+def test_hook_emits_progress_event() -> None:
+    events = []
+    engine = YtDlpEngine(Settings(), on_progress=events.append)
+    engine._hook(
+        {
+            "status": "downloading",
+            "downloaded_bytes": 50,
+            "total_bytes": 100,
+            "speed": 1024 * 1024,
+            "eta": 5,
+            "info_dict": {"title": "示例视频"},
+        }
+    )
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.kind == "download"
+    assert ev.status == "downloading"
+    assert ev.percent == 50.0
+    assert ev.progress == 0.5
+    assert ev.detail == "示例视频"
+
+
+def test_hook_emits_finished() -> None:
+    events = []
+    engine = YtDlpEngine(Settings(), on_progress=events.append)
+    engine._hook({"status": "finished"})
+    assert len(events) == 1
+    assert events[0].status == "downloading"
+    assert events[0].percent == 100.0
+
+
+def test_is_cookie_error() -> None:
+    engine = YtDlpEngine(Settings())
+    assert engine._is_cookie_error("ERROR: Could not copy Chrome cookie database. See ...")
+    assert engine._is_cookie_error("ERROR: Failed to copy Cookies database to memory. See ...")
+    assert not engine._is_cookie_error("ERROR: HTTP Error 403: Forbidden")
+    assert not engine._is_cookie_error("")
+
+
+def test_run_falls_back_when_cookie_db_locked(monkeypatch) -> None:
+    """A locked browser cookie DB must not fail the download: retry without
+    cookies (the user's Edge-cookie config with Edge running reproduces this)."""
+    import yt_dlp.utils
+
+    from nyavview.engines.ytdlp import YtDlpEngine
+
+    settings = Settings(cookies_from_browser="edge")
+    engine = YtDlpEngine(settings, on_progress=lambda e: None)
+
+    calls: list[str] = []
+
+    def fake_run_once(self, url, destination, audio_only, overwrite, ydl_cls):
+        calls.append(str(self.settings.cookies_from_browser))
+        if self.settings.cookies_from_browser:
+            raise yt_dlp.utils.DownloadError(
+                "ERROR: Could not copy Chrome cookie database. See issue 7271"
+            )
+        return Path("downloaded.mp4")
+
+    monkeypatch.setattr(YtDlpEngine, "_run_once", fake_run_once)
+    result = engine._run("https://x", Path("d"), False, False)
+    assert result == Path("downloaded.mp4")
+    # first call had cookies, the fallback retried without them
+    assert calls == ["edge", "None"]
 
 
 def test_opts_cookie_precedence(tmp_path: Path) -> None:

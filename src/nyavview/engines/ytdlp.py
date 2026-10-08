@@ -78,6 +78,7 @@ class YtDlpEngine:
             "no_warnings": True,
             "ignoreconfig": True,
             "noprogress": True,  # progress is driven through hooks
+            "progress_hooks": [self._hook],
             "concurrent_fragment_downloads": 4,
             "ffmpeg_location": self.settings.resolve_ffmpeg(),
         }
@@ -127,13 +128,54 @@ class YtDlpEngine:
         info = data.get("info_dict") or {}
         return info.get("title") or Path(data.get("filename") or "").name or None
 
+    @staticmethod
+    def _is_cookie_error(message: str) -> bool:
+        """Detect yt-dlp errors caused by unreadable browser cookie DBs."""
+        lowered = (message or "").lower()
+        return "cookie" in lowered and ("could not copy" in lowered or "database" in lowered)
+
     def _run(self, url: str, destination: Path, audio_only: bool, overwrite: bool) -> Path:
         import yt_dlp.utils  # noqa: PLC0415 - imported lazily to keep import cost out of CLI path
         from yt_dlp import YoutubeDL
 
+        try:
+            return self._run_once(url, destination, audio_only, overwrite, YoutubeDL)
+        except yt_dlp.utils.DownloadError as exc:
+            message = str(exc)
+            # Browser cookie DBs are locked while the browser runs. Retry
+            # without cookies so the download still succeeds (possibly lower
+            # quality) instead of failing outright.
+            if self._is_cookie_error(message) and (self.settings.cookies_from_browser or self.settings.cookie_file):
+                self._emit(
+                    "downloading",
+                    detail="浏览器 Cookie 读取失败（浏览器可能在运行），已自动切换为无 Cookie 下载…",
+                )
+                original = self.settings.model_copy(
+                    update={"cookies_from_browser": None, "cookie_file": None}
+                )
+                # Reuse the same cancel event so a user cancel during the
+                # fallback still aborts this retry.
+                engine = YtDlpEngine(original, on_progress=self._on_progress)
+                engine._cancel = self._cancel
+                try:
+                    return engine._run_once(url, destination, audio_only, overwrite, YoutubeDL)
+                except yt_dlp.utils.DownloadError as retry_exc:
+                    raise DownloadError(str(retry_exc)) from retry_exc
+            raise DownloadError(message) from exc
+
+    def _run_once(
+        self,
+        url: str,
+        destination: Path,
+        audio_only: bool,
+        overwrite: bool,
+        ydl_cls,
+    ) -> Path:
+        import yt_dlp.utils  # noqa: PLC0415
+
         opts = self._opts(destination, audio_only=audio_only, overwrite=overwrite)
         try:
-            with YoutubeDL(opts) as ydl:
+            with ydl_cls(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 if isinstance(info, list):
                     info = info[-1]
@@ -141,7 +183,7 @@ class YtDlpEngine:
         except yt_dlp.utils.DownloadCancelled:
             raise CanceledError("download cancelled by user") from None
         except yt_dlp.utils.DownloadError as exc:
-            raise DownloadError(str(exc)) from exc
+            raise
 
     @staticmethod
     def _locate_output(info: Any, destination: Path, audio_only: bool) -> Path:

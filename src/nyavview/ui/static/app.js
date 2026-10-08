@@ -129,32 +129,40 @@ function upsertJob(job) {
 /* ---------------------------------------------------------- events */
 
 function handleEvent(ev) {
+  // Ensure the job exists: events may arrive before we ever saw this job
+  // (e.g. submitted in this session), so create it from the event payload.
+  let job = state.jobs.get(ev.jobId);
+  if (!job) {
+    job = {
+      id: ev.jobId,
+      kind: ev.kind || "download",
+      label: ev.detail || `任务 ${ev.jobId}`,
+      status: ev.status || "pending",
+      createdAt: Date.now(),
+    };
+    state.jobs.set(ev.jobId, job);
+  }
   if (ev.type === "progress") {
-    const job = state.jobs.get(ev.jobId);
-    if (job) {
-      job.progress = ev.progress;
-      job.percent = ev.percent;
-      job.speed = ev.speed;
-      job.eta = ev.eta;
-      if (ev.detail) job.detail = ev.detail;
-    }
+    job.kind = ev.kind || job.kind;
+    job.progress = ev.progress;
+    job.percent = ev.percent;
+    job.speed = ev.speed;
+    job.eta = ev.eta;
+    if (ev.detail) job.detail = ev.detail;
   } else if (ev.type === "status") {
-    const job = state.jobs.get(ev.jobId);
-    if (job) {
-      job.status = ev.status;
-      job.error = ev.error;
-      job.output = ev.output;
-      if (ev.status === "done") {
-        toast("任务完成：" + job.label, "success");
-        log("success", `[${job.id}] 完成 → ${ev.output || job.label}`);
-      } else if (ev.status === "error") {
-        toast("任务失败：" + (ev.error || job.label), "error");
-        log("error", `[${job.id}] 失败：${ev.error}`);
-      } else if (ev.status === "cancelled") {
-        log("warn", `[${job.id}] 已取消`);
-      } else if (ev.status === "running") {
-        log("info", `[${job.id}] 开始：${job.label}`);
-      }
+    job.status = ev.status;
+    job.error = ev.error;
+    job.output = ev.output;
+    if (ev.status === "done") {
+      toast("任务完成：" + job.label, "success");
+      log("success", `[${job.id}] 完成 → ${ev.output || job.label}`);
+    } else if (ev.status === "error") {
+      toast("任务失败：" + (ev.error || job.label), "error");
+      log("error", `[${job.id}] 失败：${ev.error}`);
+    } else if (ev.status === "cancelled") {
+      log("warn", `[${job.id}] 已取消`);
+    } else if (ev.status === "running") {
+      log("info", `[${job.id}] 开始：${job.label}`);
     }
   }
   renderQueue();
@@ -185,6 +193,18 @@ async function refreshDirs() {
 }
 
 /* ---------------------------------------------------------- actions */
+
+function optimisticJob(jobId, kind, label) {
+  if (state.jobs.has(jobId)) return;
+  state.jobs.set(jobId, {
+    id: jobId,
+    kind,
+    label,
+    status: "pending",
+    createdAt: Date.now(),
+  });
+  renderQueue();
+}
 
 function pickDir(field) {
   return api().pick_output_dir().then((path) => {
@@ -246,6 +266,7 @@ $("downloadBtn").addEventListener("click", () => {
   api().start_download(url, options).then((res) => {
     if (res.ok) {
       log("info", `[${res.jobId}] 提交下载：${url}`);
+      optimisticJob(res.jobId, "download", url);
       switchPanel("queue");
     } else {
       toast(res.error || "提交失败", "error");
@@ -271,6 +292,7 @@ $("cvStart").addEventListener("click", () => {
   api().start_convert(source, options).then((res) => {
     if (res.ok) {
       log("info", `[${res.jobId}] 提交转码：${source}`);
+      optimisticJob(res.jobId, "convert", source.split(/[\\/]/).pop());
       switchPanel("queue");
     } else {
       toast(res.error || "提交失败", "error");
@@ -289,6 +311,7 @@ $("biliStart").addEventListener("click", () => {
   api().start_bili(source, options).then((res) => {
     if (res.ok) {
       log("info", `[${res.jobId}] 提交 B站缓存转换：${source}`);
+      optimisticJob(res.jobId, "bili", source.split(/[\\/]/).pop());
       switchPanel("queue");
     } else {
       toast(res.error || "提交失败", "error");

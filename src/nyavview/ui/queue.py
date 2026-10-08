@@ -204,6 +204,11 @@ class JobManager:
                 overwrite=bool(options.get("overwrite")),
             )
             self._finish(job)
+        except asyncio.CancelledError:
+            # External task.cancel() (ffmpeg subprocess kill path). Mark the
+            # job cancelled so the UI is not left with a stuck "running" card.
+            self._finish(job, cancelled=True)
+            raise
         except CanceledError:
             self._finish(job, cancelled=True)
         except NyaViewError as exc:
@@ -225,6 +230,9 @@ class JobManager:
                 overwrite=bool(options.get("overwrite")),
             )
             self._finish(job)
+        except asyncio.CancelledError:
+            self._finish(job, cancelled=True)
+            raise
         except CanceledError:
             self._finish(job, cancelled=True)
         except NyaViewError as exc:
@@ -247,6 +255,9 @@ class JobManager:
             )
             job.output = outputs[0] if outputs else None
             self._finish(job)
+        except asyncio.CancelledError:
+            self._finish(job, cancelled=True)
+            raise
         except CanceledError:
             self._finish(job, cancelled=True)
         except NyaViewError as exc:
@@ -262,9 +273,16 @@ class JobManager:
         if job is None or job.status not in (JobStatus.PENDING, JobStatus.RUNNING):
             return False
         if isinstance(job.engine, YtDlpEngine):
-            job.engine.cancel()  # raises DownloadCancelled in the worker thread
-        if job.task is not None:
-            job.task.cancel()  # cancels ffmpeg subprocess via run_process
+            # Graceful cancel: the progress hook raises DownloadCancelled
+            # -> CanceledError, which the task handler marks as cancelled.
+            # Do NOT task.cancel() here — that raises asyncio.CancelledError
+            # inside the coroutine, bypassing the CanceledError handler and
+            # leaving the job stuck in "running" with no status event.
+            job.engine.cancel()
+        elif job.task is not None:
+            # ffmpeg: cancelling the asyncio task kills the subprocess
+            # (run_process handles CancelledError by killing the child).
+            job.task.cancel()
         return True
 
     def clear_finished(self) -> int:
