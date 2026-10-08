@@ -267,6 +267,7 @@ class ProcessTimeoutError(EngineError): ...
 1. **JS↔Python 桥接死锁**：页面持续轮询 `api.poll()` 时，若 Python 侧再调 `window.evaluate_js` 会桥接重入死锁。因此本应用**一律用"JS 轮询 Python"方向**取事件，绝不在运行期从 Python 推 JS（自测脚本 `selftest_ui.py` 因此改用 `?selftest=1` 让页面主动上报 DOM 统计，而非 `evaluate_js`）。
 2. **PyInstaller 惰性导入陷阱**：`yt_dlp` 是在 `YtDlpEngine._run()` 内惰性导入的，静态分析不可见，必须在 spec 的 `hiddenimports` 显式加入，否则 EXE 下载必然 `ImportError`。
 3. **per-job 选项透传**：UI 里每任务可选的编码预设/码率/并行数/Cookie 等，需按任务克隆一份 `Settings`（`model_copy`）下发引擎，否则会被静默忽略。
+4. **TOML 持久化的反斜杠转义**（复验时发现）：Windows 下 `str(Path("D:/x"))` 会变成 `D:\x`，若直接把 `Path` 插进 `key = "value"` 写出，生成的 `~/.nyavview.toml` 是非法 TOML，下次启动设置会静默丢失。`save_user_settings` 现对字符串统一做 `\` → `\\` 转义，整数写成裸整数；新增 `tests/test_ui_settings.py` 回归覆盖。
 
 ---
 
