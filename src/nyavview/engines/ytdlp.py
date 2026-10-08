@@ -79,6 +79,9 @@ class YtDlpEngine:
             "ignoreconfig": True,
             "noprogress": True,  # progress is driven through hooks
             "progress_hooks": [self._hook],
+            # Prefer H.264 so the result plays everywhere (Windows built-in
+            # players do not decode AV1/HEVC without codec extensions).
+            "format_sort": ["vcodec:h264"],
             "concurrent_fragment_downloads": 4,
             "ffmpeg_location": self.settings.resolve_ffmpeg(),
         }

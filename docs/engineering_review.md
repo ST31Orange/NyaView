@@ -275,6 +275,9 @@ class ProcessTimeoutError(EngineError): ...
    - **进度钩子未接线**：`YtDlpEngine._opts` 定义了 `_hook` 却从未把它注册进 yt-dlp 的 `progress_hooks` 选项——下载时零进度事件、取消（`DownloadCancelled` 检查在 hook 内）也失效。修复：`_opts` 加 `"progress_hooks": [self._hook]`；新增 3 个回归测试（opts 注册、downloading/finished 事件）。
    - 顺带修复**取消路径**：`JobManager.cancel` 对 yt-dlp 任务误用 `task.cancel()`，会以 `asyncio.CancelledError` 取消协程、绕过 `except CanceledError`，导致任务卡在 running 且无状态事件；改为只调 `engine.cancel()`（优雅取消），并给 `_run_*` 加 `asyncio.CancelledError` 防御性处理（ffmpeg 子进程 kill 路径）。实测：下载 24.6s→83 个进度事件；取消 45s 内状态正确变 `cancelled`；最终均生成完整 MP4（`.part` 是 yt-dlp 下载中的正常中间文件，完成后自动清理并改名）。
 8. **下载中断且报"Could not copy Chrome cookie database"（用户报告，根因见下）**：用户最初"只下载出 `.part` 而非完整 MP4"的真相——用户在设置面板配置了 `cookies_from_browser = "edge"`，而 Edge 正在运行时其 cookie 数据库被锁定，yt-dlp 提取 cookie 失败（issue #7271）导致下载中断（`.part` 只是下载启动后的中间文件）。修复：`YtDlpEngine._run` 检测 cookie 类错误后**自动回退为无 Cookie 重试**（共享同一取消事件），并发出"浏览器 Cookie 读取失败，已自动切换为无 Cookie 下载"提示，下载不再硬失败。实测：Edge 运行中、配置 edge cookie 的情况下，下载仍成功产出完整 21.5MB MP4。新增 `test_is_cookie_error` / `test_run_falls_back_when_cookie_db_locked` 回归测试。
+9. **B 站下载"只有音频没有视频" + 转换出的 MP4"文件无效"（用户报告，根因见下）**：两个症状同源——B 站无登录时 yt-dlp 常选到 **AV1（av01）编码**的视频流，Windows 自带播放器（照片/电影和电视）不支持 AV1，表现为"只有音频"；而转换若**中途被中断**（取消/关闭应用），ffmpeg 子进程被杀后会在目标路径留下**残缺的 .mp4**（看起来大小正常但 moov 缺失/损坏，打不开）。修复两点：
+   - **下载优先 H.264**：`_opts` 增加 `format_sort: ["vcodec:h264"]`，让 yt-dlp 在同等质量下优先选 H.264，下载结果 Windows 全兼容（实测同一视频从 av1 变为 h264，播放器可直开）。
+   - **转换原子写入**：`FfmpegTranscoder._transcode_to` 先编码到 `.<stem>.part-<pid>.mp4` 临时文件，成功后才 `os.replace` 改名为最终文件；任何中断只留下临时文件（并清理），最终 `.mp4` 绝不残缺。实测：转换输出 decode rc=0、无残留临时文件。
 
 ---
 

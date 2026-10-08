@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -156,6 +157,36 @@ class FfmpegTranscoder:
 
     # ------------------------------------------------------------ transcode
 
+    async def _transcode_to(
+        self,
+        inputs: Sequence[Path],
+        target: Path,
+        *,
+        audio_mode: AudioMode,
+        overwrite: bool,
+        label: str,
+        probe_source: Optional[Path] = None,
+    ) -> Path:
+        """Encode to a temp file next to the target, then rename atomically.
+
+        If ffmpeg is interrupted (cancel / app close), only the temp file is
+        left behind — the final ``.mp4`` is never a truncated, unopenable file.
+        """
+        duration = await self._probe_duration(probe_source or inputs[0])
+        tmp = target.with_name(f".{target.stem}.part-{os.getpid()}{target.suffix}")
+        try:
+            args = self._build_args(inputs, tmp, audio_mode=audio_mode, overwrite=True)
+            self._emit("running", detail=label)
+            await self._run_ffmpeg(args, duration=duration, label=label)
+            if target.exists() and not overwrite:
+                target = unique_path(target)
+            os.replace(tmp, target)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        self._emit("finished", progress=1.0, percent=100.0, detail=str(target))
+        return target
+
     async def transcode(
         self,
         source: Path,
@@ -166,15 +197,15 @@ class FfmpegTranscoder:
         source = Path(source).expanduser().resolve()
         target_dir = ensure_directory(Path(target_dir).expanduser().resolve())
         target = target_dir / f"{safe_filename(source.stem)}.mp4"
-        if not overwrite:
+        if not overwrite and target.exists():
             target = unique_path(target)
-
-        duration = await self._probe_duration(source)
-        args = self._build_args([source], target, audio_mode="encode", overwrite=overwrite)
-        self._emit("running", detail=f"正在转换 {source.name}")
-        await self._run_ffmpeg(args, duration=duration, label=f"正在转换 {source.name}")
-        self._emit("finished", progress=1.0, percent=100.0, detail=str(target))
-        return target
+        return await self._transcode_to(
+            [source],
+            target,
+            audio_mode="encode",
+            overwrite=overwrite,
+            label=f"正在转换 {source.name}",
+        )
 
     async def transcode_bilibili_cache(
         self,
@@ -193,16 +224,18 @@ class FfmpegTranscoder:
             async with sem:
                 pair = self._find_m4s_pair(root)
                 target = target_dir / f"{safe_filename(self._title(root))}.mp4"
-                if not overwrite:
+                if not overwrite and target.exists():
                     target = unique_path(target)
-                duration = await self._probe_duration(pair.video)
-                args = self._build_args(
-                    [pair.video, pair.audio], target, audio_mode="copy", overwrite=overwrite
+                return await self._transcode_to(
+                    [pair.video, pair.audio],
+                    target,
+                    audio_mode="copy",
+                    overwrite=overwrite,
+                    label=f"正在转换 {root.name}",
+                    probe_source=pair.video,
                 )
-                self._emit("running", detail=f"正在转换 {root.name}")
-                await self._run_ffmpeg(args, duration=duration, label=f"正在转换 {root.name}")
-                self._emit("finished", progress=1.0, percent=100.0, detail=str(target))
-                return target
+
+        return list(await asyncio.gather(*(_one(root) for root in roots)))
 
         return list(await asyncio.gather(*(_one(root) for root in roots)))
 
