@@ -1,0 +1,8 @@
+# A minimal settings template. Copy this to `nyavview.toml` and edit freely.
+
+download_dir = "downloads"
+converted_dir = "converted"
+
+# Set these if you want logged-in Bilibili quality.
+# cookie_file = "cookies.txt"
+# cookies_from_browser = "edge"

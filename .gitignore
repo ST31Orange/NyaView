@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+downloads/
+converted/
+dist/
+build/
+*.egg-info/
+*.egg/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+nyavview.toml
