@@ -364,13 +364,20 @@ function boot() {
 }
 
 window.addEventListener("pywebviewready", boot);
-// Fallback for dev-in-browser preview (no pywebview)
+// Fallback for dev-in-browser preview (no pywebview). Wait a short grace
+// period: at DOMContentLoaded pywebview may not have injected the bridge yet
+// (it does so after the page finishes loading), so check again before giving
+// up — otherwise the preview-mode message races with a real boot().
 if (!window.pywebview) {
-  document.addEventListener("DOMContentLoaded", () => {
+  let tries = 0;
+  const probe = () => {
+    if (window.pywebview) return; // bridge arrived — boot() will handle it
+    if (++tries < 8) { setTimeout(probe, 250); return; }
     $("runtimeText").textContent = "浏览器预览模式（无后端）";
     log("warn", "未检测到 pywebview 桥接，功能不可用（浏览器预览模式）");
     renderQueue();
-  });
+  };
+  document.addEventListener("DOMContentLoaded", probe);
 }
 
 // Self-test hook (dev only): with ?selftest=1 the page reports DOM stats back

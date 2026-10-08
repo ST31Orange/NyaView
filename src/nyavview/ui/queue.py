@@ -69,6 +69,10 @@ class Job:
 class JobManager:
     """Owns the background loop, the job registry, and the event queue."""
 
+    # pywebview's get_functions() recursively walks API-object attributes; mark
+    # this object as non-serializable so the bridge only exposes real methods.
+    _serializable = False
+
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.settings = settings or Settings.discover()
         self._jobs: dict[str, Job] = {}

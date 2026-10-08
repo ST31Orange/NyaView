@@ -258,8 +258,8 @@ class ProcessTimeoutError(EngineError): ...
 | Bilibili 缓存合并（真实 m4s） | 成功，按 `entry.json` 标题命名 |
 | Bilibili 视频下载（真实链接） | 成功：`【官方 MV】Never Gonna Give You Up…mp4` |
 | 桌面 UI 渲染 | 真实窗口：标题、6 卡片、5 标签、品牌、桥接均正常 |
-| 冻结 EXE（onedir `dist/NyaView/NyaView.exe`） | 启动成功，窗口标题正确，18 个 WebView2 渲染进程；**冒烟测试：HTTP 200 + 页面内容验证通过** |
-| 冻结 EXE（onefile `dist/NyaView.exe`，53MB） | 启动成功；**冒烟测试：HTTP 200 + 页面内容验证通过**（修复 404 后） |
+| 冻结 EXE（onedir `dist/NyaView/NyaView.exe`） | 启动成功；**冒烟测试 HTTP 200 + CDP 桥接验证 PASS**（`api.poll`/`api.start_download` 均为 function，UI 实时） |
+| 冻结 EXE（onefile `dist/NyaView.exe`，53MB） | 启动成功；**冒烟测试 HTTP 200 + CDP 桥接验证 PASS**（修复卡死后） |
 | pywebview 6.2.1 关闭时 stderr 噪声 | 仅关闭时出现（运行时无影响），`--noconsole` GUI 不可见 |
 
 ### 5.2 过程中发现并修复的设计点
@@ -269,6 +269,7 @@ class ProcessTimeoutError(EngineError): ...
 3. **per-job 选项透传**：UI 里每任务可选的编码预设/码率/并行数/Cookie 等，需按任务克隆一份 `Settings`（`model_copy`）下发引擎，否则会被静默忽略。
 4. **TOML 持久化的反斜杠转义**（复验时发现）：Windows 下 `str(Path("D:/x"))` 会变成 `D:\x`，若直接把 `Path` 插进 `key = "value"` 写出，生成的 `~/.nyavview.toml` 是非法 TOML，下次启动设置会静默丢失。`save_user_settings` 现对字符串统一做 `\` → `\\` 转义，整数写成裸整数；新增 `tests/test_ui_settings.py` 回归覆盖。
 5. **EXE 打包后前端 404（用户报告，根因见下）**：打包后的 EXE 打开后 WebView2 显示 `404 Not Found — File does not exist`。根因是 **PyInstaller 6 的 onedir 布局也会设置 `sys._MEIPASS`（指向 `_internal/`）**，而原 `resource_path()` 以 `_MEIPASS` 为基准拼 `static/index.html`，但 spec 的 datas 目标是 `nyavview/ui/static`（文件落在 `_internal/nyavview/ui/static/`），导致路径错位、Bottle 服务器从 `_internal/static` 提供文件而该目录为空 → 404。修复：把两个 spec 的 datas 目标统一改为 `static`（文件落在 `<base>/static/`），并让 `resource_path()` 在 `_MEIPASS` 与 `__file__.parent` 两个候选里探测实际存在的路径。新增 `smoke_exe.py` 冒烟测试：启动 EXE → 找到其 HTTP 监听端口（含 PyInstaller onefile 子进程）→ 抓取 `/index.html` 与 `/app.js` 并断言 HTTP 200 与关键内容，杜绝"进程活着但页面 404"再次发生。
+6. **EXE 打开即"未响应/卡死"（用户报告，根因见下）**：窗口打开后 Windows 显示"未响应"，且页面停留在"浏览器预览模式（无后端）"。根因：pywebview 在注入 JS 桥接前会调用 `util.get_functions()` **递归遍历 `js_api` 对象的全部属性**（`dir()` + `getattr`）；我的 `Api` 实例公开持有 `self.manager`（JobManager → Settings pydantic 模型）与 `self.window`（pywebview Window → EdgeChrome → WinForms/WebView2 的 .NET 对象图），在冻结环境下遍历这套对象图导致 `generate_js_object` 线程长时间卡死——桥接方法从未注入、`pywebviewready` 从不触发、`boot()` 不运行，UI 空转（此时 `Process.Responding` 也可能为 False，配合 WebView2 运行时/SDK 版本差异的 COM 噪声，被 Windows 判定为"未响应"）。修复：**Api 内部引用全部改为下划线前缀**（`_manager`/`_window`，`get_functions` 跳过下划线属性），并给 `JobManager`/`Settings` 加 `_serializable = False`，使桥接只暴露 13 个真实 API 方法（0.0ms 生成）；同时修复 app.js 的"预览模式"fallback 时序竞态（给桥接注入留宽限期）。验证：`cdp_check.py` 通过 WebView2 CDP 断言 `window.pywebview.api.poll/start_download` 均为 `function`、`runtimeText` 显示真实 ffmpeg/yt-dlp 版本——两个 EXE 均 PASS。
 
 ---
 

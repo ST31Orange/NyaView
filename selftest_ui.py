@@ -38,7 +38,7 @@ def main() -> None:
         height=780,
         background_color="#FAF9F5",
     )
-    api.window = window
+    api._window = window
 
     def watchdog() -> None:
         DONE.wait(15)

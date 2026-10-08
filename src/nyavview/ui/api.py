@@ -64,9 +64,16 @@ def save_user_settings(settings: Settings) -> None:
 
 
 class Api:
+    # NOTE: internal references are underscore-prefixed on purpose. pywebview's
+    # get_functions() recursively walks every non-underscore attribute of the
+    # js_api object to build the JS bridge; walking into the JobManager /
+    # webview Window / pydantic Settings object graph could hang (it did in the
+    # frozen EXE). Underscore attrs are skipped, so the bridge exposes only the
+    # real API methods below.
+
     def __init__(self, manager: JobManager) -> None:
-        self.manager = manager
-        self.window: Optional[webview.Window] = None  # injected by pywebview
+        self._manager = manager
+        self._window: Optional[webview.Window] = None  # injected after create_window
 
     # ----------------------------------------------------------- runtime
 
@@ -77,7 +84,7 @@ class Api:
             ytdlp = yt_dlp.version.__version__
         except Exception:
             ytdlp = "?"
-        settings = self.manager.settings
+        settings = self._manager.settings
         return {
             "name": APP_NAME,
             "version": APP_VERSION,
@@ -113,7 +120,7 @@ class Api:
                 else:
                     setattr(settings, key, value)
             save_user_settings(settings)
-            self.manager.settings = settings
+            self._manager.settings = settings
             return {"ok": True}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -121,9 +128,9 @@ class Api:
     # ----------------------------------------------------------- dialogs
 
     def pick_file(self, title: str = "选择文件") -> Optional[str]:
-        if self.window is None:
+        if self._window is None:
             return None
-        result = self.window.create_file_dialog(
+        result = self._window.create_file_dialog(
             webview.OPEN_DIALOG, allow_multiple=False, file_types=("视频文件 (*.mp4;*.mkv;*.mov;*.avi;*.flv;*.ts;*.webm)", "所有文件 (*.*)")
         )
         if not result:
@@ -131,9 +138,9 @@ class Api:
         return str(result[0])
 
     def pick_folder(self, title: str = "选择文件夹") -> Optional[str]:
-        if self.window is None:
+        if self._window is None:
             return None
-        result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
+        result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         if not result:
             return None
         return str(result[0])
@@ -148,7 +155,7 @@ class Api:
         if not url:
             return {"ok": False, "error": "请输入下载链接"}
         try:
-            job_id = self.manager.submit_download(url, options or {})
+            job_id = self._manager.submit_download(url, options or {})
             return {"ok": True, "jobId": job_id}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -157,7 +164,7 @@ class Api:
         if not source:
             return {"ok": False, "error": "请先选择要转换的文件"}
         try:
-            job_id = self.manager.submit_convert(source, options or {})
+            job_id = self._manager.submit_convert(source, options or {})
             return {"ok": True, "jobId": job_id}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -166,21 +173,21 @@ class Api:
         if not source:
             return {"ok": False, "error": "请先选择 Bilibili 缓存文件夹"}
         try:
-            job_id = self.manager.submit_bili(source, options or {})
+            job_id = self._manager.submit_bili(source, options or {})
             return {"ok": True, "jobId": job_id}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     def cancel(self, job_id: str) -> dict[str, Any]:
-        ok = self.manager.cancel(job_id)
+        ok = self._manager.cancel(job_id)
         return {"ok": ok, "jobId": job_id}
 
     def clear_finished(self) -> dict[str, Any]:
-        count = self.manager.clear_finished()
+        count = self._manager.clear_finished()
         return {"ok": True, "removed": count}
 
     def jobs(self) -> list[dict[str, Any]]:
-        return self.manager.list_jobs()
+        return self._manager.list_jobs()
 
     def poll(self) -> list[dict[str, Any]]:
-        return self.manager.poll()
+        return self._manager.poll()

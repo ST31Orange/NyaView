@@ -101,7 +101,7 @@ def main() -> None:
         min_size=(900, 660),
         background_color="#FAF9F5",
     )
-    api.window = window
+    api._window = window
     try:
         webview.start(debug=False)
     finally:

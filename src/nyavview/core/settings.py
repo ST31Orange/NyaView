@@ -22,6 +22,9 @@ CONFIG_FILENAME = "nyavview.toml"
 class Settings(BaseModel):
     """Runtime settings for the download / transcode engines."""
 
+    # pywebview bridge walks API attributes; keep Settings out of the bridge.
+    _serializable = False
+
     ffmpeg_path: Optional[Path] = None  # None -> auto-resolve via imageio-ffmpeg
     download_dir: Path = Path("downloads")
     converted_dir: Path = Path("converted")
