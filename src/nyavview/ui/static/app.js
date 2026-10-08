@@ -28,6 +28,14 @@ document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => switchPanel(tab.dataset.panel));
 });
 
+/* Convert page sub-tabs (local file vs Bilibili cache) */
+document.querySelectorAll(".sub-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".sub-tab").forEach((t) => t.classList.toggle("active", t === tab));
+    document.querySelectorAll(".sub-panel").forEach((p) => p.classList.toggle("active", p.id === `sub-${tab.dataset.sub}`));
+  });
+});
+
 /* ---------------------------------------------------------- toast */
 
 let toastTimer = null;

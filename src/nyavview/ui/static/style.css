@@ -55,7 +55,7 @@ body {
 .app {
   max-width: 1000px;
   margin: 0 auto;
-  padding: 28px 32px 40px;
+  padding: 24px 32px 24px;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -194,23 +194,23 @@ body {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 26px 28px;
+  padding: 18px 24px;
   box-shadow: var(--shadow-card);
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .card-title {
   font-family: var(--serif);
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.2px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .card-sub {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-secondary);
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .card-sub code {
@@ -229,6 +229,90 @@ body {
   gap: 20px;
   align-items: stretch;
 }
+
+/* ---- compact controls ---- */
+.select-sm {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.path-line-inline {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}
+
+.hint-line-inline {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-left: 6px;
+}
+
+.drop-zone-slim {
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+/* ---- convert sub-tabs ---- */
+.sub-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  margin-bottom: 16px;
+  width: fit-content;
+}
+
+.sub-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 7px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.sub-tab:hover { color: var(--text); }
+
+.sub-tab.active {
+  background: var(--card);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(61, 57, 41, 0.12);
+}
+
+.sub-panel { display: none; }
+.sub-panel.active { display: block; animation: fade-in 0.18s ease; }
+
+/* ---- settings sections ---- */
+.settings-section { margin-bottom: 6px; }
+
+.settings-section-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 5px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.form-grid.form-grid-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+@media (max-width: 720px) { .form-grid.form-grid-3 { grid-template-columns: 1fr; } }
 
 .convert-card {
   display: flex;
@@ -286,12 +370,12 @@ body {
 
 .select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
-.form-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.form-field { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--text-secondary); }
 
 .form-field input {
-  padding: 10px 14px;
+  padding: 6px 12px;
   font-family: var(--sans);
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border-strong);
@@ -302,13 +386,13 @@ body {
 
 .form-field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--card); }
 
-.form-field .select { background: var(--bg); }
+.form-field .select { background: var(--bg); padding: 6px 12px; }
 
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px 20px;
-  margin-bottom: 20px;
+  gap: 10px 20px;
+  margin-bottom: 0;
 }
 
 @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
@@ -496,7 +580,7 @@ body {
 }
 
 .hint-line {
-  margin-top: 8px;
+  margin-top: 6px;
   font-size: 12px;
   color: var(--text-faint);
 }
@@ -683,7 +767,7 @@ body {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 .settings-msg { font-size: 13px; color: var(--success); }

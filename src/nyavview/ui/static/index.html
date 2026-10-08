@@ -61,31 +61,24 @@
           </div>
           <div class="option-row">
             <label class="toggle">
-              <input type="checkbox" id="dlWriteSubs" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">下载字幕（B站CC/YouTube）</span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="dlAutoRetry" checked />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">失败自动重试</span>
-            </label>
-          </div>
-          <div class="option-row">
-            <label class="field-label" for="dlNaming">命名模板</label>
-            <input id="dlNaming" class="select naming-input" type="text"
-                   placeholder="%(title).180B.%(ext)s" spellcheck="false" />
-          </div>
-          <div class="option-row">
-            <label class="toggle">
               <input type="checkbox" id="dlAudioOnly" />
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">仅音频（M4A）</span>
+              <span class="toggle-label">仅音频</span>
             </label>
             <label class="toggle">
               <input type="checkbox" id="dlOverwrite" />
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              <span class="toggle-label">覆盖已存在</span>
+              <span class="toggle-label">覆盖</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="dlWriteSubs" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">字幕</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="dlAutoRetry" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">失败重试</span>
             </label>
             <span class="spacer"></span>
             <label class="field-label" for="dlDir">保存到</label>
@@ -93,71 +86,75 @@
           </div>
           <div class="path-line" id="dlDirPath">未选择（使用默认目录）</div>
           <div class="option-row">
-            <label class="field-label" for="dlParts">多P/分P</label>
-            <select id="dlParts" class="select">
+            <label class="field-label" for="dlParts">分P</label>
+            <select id="dlParts" class="select select-sm">
               <option value="" selected>仅第 1 P</option>
               <option value="all">全部 P</option>
               <option value="range">指定范围…</option>
             </select>
             <input id="dlPartsRange" class="select parts-input" type="text"
                    placeholder="如 1-3 或 1,3,5" style="display:none" spellcheck="false" />
-            <span class="spacer"></span>
             <label class="field-label" for="dlQuality">画质</label>
-            <select id="dlQuality" class="select">
+            <select id="dlQuality" class="select select-sm">
               <option value="best" selected>最佳</option>
-              <option value="h264">H.264 优先（最兼容）</option>
+              <option value="h264">H.264 优先</option>
             </select>
+            <label class="field-label" for="dlNaming">命名</label>
+            <input id="dlNaming" class="select naming-input" type="text"
+                   placeholder="%(title).180B.%(ext)s" spellcheck="false" />
           </div>
           <div class="option-row">
             <label class="field-label" for="dlCookies">Cookie</label>
-            <select id="dlCookies" class="select">
+            <select id="dlCookies" class="select select-sm">
               <option value="">不使用</option>
-              <option value="edge">从浏览器读取（Edge）</option>
-              <option value="chrome">从浏览器读取（Chrome）</option>
-              <option value="firefox">从浏览器读取（Firefox）</option>
-              <option value="file">使用 Cookie 文件…</option>
+              <option value="edge">Edge</option>
+              <option value="chrome">Chrome</option>
+              <option value="firefox">Firefox</option>
+              <option value="file">Cookie 文件…</option>
             </select>
             <button id="dlCookiePick" class="btn btn-ghost path-pick" style="display:none">选择文件</button>
+            <span class="hint-line-inline" id="dlCookiePath"></span>
           </div>
-          <div class="hint-line" id="dlCookiePath"></div>
           <div class="hint-line">提示：浏览器 Cookie 需关闭浏览器后才能读取；读取失败会自动回退为无 Cookie 下载。</div>
         </div>
       </section>
 
       <!-- -------- Convert -------- -->
       <section class="panel" id="panel-convert" data-panel="convert">
-        <div class="grid-2">
-          <div class="card convert-card">
-            <h2 class="card-title">本地视频 → MP4</h2>
-            <p class="card-sub">把任意格式（MKV / MOV / AVI / FLV…）重编码为兼容性最好的 H.264 + AAC MP4。</p>
-            <div id="cvDropZone" class="drop-zone">拖拽视频文件到这里，或</div>
-            <button id="cvPickFile" class="btn btn-ghost btn-block">选择视频文件</button>
-            <div class="path-line" id="cvFilePath">未选择文件</div>
+        <div class="card">
+          <div class="sub-tabs" id="convertSubTabs">
+            <button class="sub-tab active" data-sub="cv">本地文件 → MP4</button>
+            <button class="sub-tab" data-sub="bili">B站缓存 → MP4</button>
+          </div>
+
+          <!-- local file form -->
+          <div id="sub-cv" class="sub-panel active">
+            <div id="cvDropZone" class="drop-zone drop-zone-slim">把视频文件拖到这里</div>
+            <div class="option-row">
+              <button id="cvPickFile" class="btn btn-ghost">选择视频文件</button>
+              <span class="path-line-inline" id="cvFilePath">未选择文件</span>
+            </div>
             <div class="option-row">
               <label class="field-label" for="cvPreset">编码预设</label>
-              <select id="cvPreset" class="select">
+              <select id="cvPreset" class="select select-sm">
                 <option value="medium" selected>medium（平衡）</option>
-                <option value="fast">fast（更快）</option>
+                <option value="fast">fast</option>
                 <option value="slow">slow（更小）</option>
-                <option value="veryfast">veryfast（最快）</option>
+                <option value="veryfast">veryfast</option>
               </select>
-            </div>
-            <div class="option-row">
               <label class="field-label" for="cvQuality">画质</label>
-              <select id="cvQuality" class="select">
-                <option value="23" selected>标准（文件较小）</option>
-                <option value="20">高质量（文件较大）</option>
-                <option value="18">超高（文件最大）</option>
-                <option value="28">低（文件最小）</option>
+              <select id="cvQuality" class="select select-sm">
+                <option value="23" selected>标准</option>
+                <option value="20">高质量</option>
+                <option value="18">超高</option>
+                <option value="28">低</option>
               </select>
-            </div>
-            <div class="option-row">
-              <label class="field-label" for="cvBitrate">音频码率</label>
-              <select id="cvBitrate" class="select">
-                <option value="128k">128 kbps</option>
-                <option value="192k" selected>192 kbps（推荐）</option>
-                <option value="256k">256 kbps</option>
-                <option value="320k">320 kbps</option>
+              <label class="field-label" for="cvBitrate">音频</label>
+              <select id="cvBitrate" class="select select-sm">
+                <option value="128k">128k</option>
+                <option value="192k" selected>192k</option>
+                <option value="256k">256k</option>
+                <option value="320k">320k</option>
               </select>
               <label class="toggle">
                 <input type="checkbox" id="cvOverwrite" />
@@ -168,22 +165,21 @@
             <div class="option-row">
               <label class="field-label" for="cvDir">输出到</label>
               <button id="cvDirPick" class="btn btn-ghost path-pick">选择目录</button>
+              <span class="path-line-inline" id="cvDirPath">未选择（使用默认目录）</span>
             </div>
-            <div class="path-line" id="cvDirPath">未选择（使用默认目录）</div>
-            <div class="card-actions">
-              <button id="cvStart" class="btn btn-primary btn-block">开始转换</button>
-            </div>
+            <button id="cvStart" class="btn btn-primary btn-block">开始转换</button>
           </div>
 
-          <div class="card convert-card">
-            <h2 class="card-title">Bilibili 缓存 → MP4</h2>
-            <p class="card-sub">把客户端缓存的 <code>entry.json + video.m4s + audio.m4s</code> 合并为单个 MP4，视频重编码、音频直拷。</p>
-            <div id="biliDropZone" class="drop-zone">拖拽缓存文件夹到这里，或</div>
-            <button id="biliPickFolder" class="btn btn-ghost btn-block">选择缓存文件夹</button>
-            <div class="path-line" id="biliPath">未选择文件夹（含多个 entry.json 的子文件夹可一次转换）</div>
+          <!-- bilibili cache form -->
+          <div id="sub-bili" class="sub-panel">
+            <div id="biliDropZone" class="drop-zone drop-zone-slim">把缓存文件夹拖到这里</div>
             <div class="option-row">
-              <label class="field-label" for="biliConcurrent">并行任务</label>
-              <select id="biliConcurrent" class="select">
+              <button id="biliPickFolder" class="btn btn-ghost">选择缓存文件夹</button>
+              <span class="path-line-inline" id="biliPath">未选择（含多个 entry.json 可一次转换）</span>
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="biliConcurrent">并行</label>
+              <select id="biliConcurrent" class="select select-sm">
                 <option value="1">1</option>
                 <option value="2" selected>2（推荐）</option>
                 <option value="3">3</option>
@@ -198,11 +194,9 @@
             <div class="option-row">
               <label class="field-label" for="biliDir">输出到</label>
               <button id="biliDirPick" class="btn btn-ghost path-pick">选择目录</button>
+              <span class="path-line-inline" id="biliDirPath">未选择（使用默认目录）</span>
             </div>
-            <div class="path-line" id="biliDirPath">未选择（使用默认目录）</div>
-            <div class="card-actions">
-              <button id="biliStart" class="btn btn-primary btn-block">开始转换</button>
-            </div>
+            <button id="biliStart" class="btn btn-primary btn-block">开始转换</button>
           </div>
         </div>
       </section>
@@ -238,61 +232,78 @@
         <div class="card">
           <h2 class="card-title">设置</h2>
           <p class="card-sub">保存到 <code>~/.nyavview.toml</code>，与命令行共用同一套配置。</p>
-          <div class="form-grid">
-            <label class="form-field">
-              <span>默认下载目录</span>
-              <input type="text" id="setDownloadDir" placeholder="downloads" />
-            </label>
-            <label class="form-field">
-              <span>默认转换目录</span>
-              <input type="text" id="setConvertedDir" placeholder="converted" />
-            </label>
-            <label class="form-field">
-              <span>音频码率</span>
-              <input type="text" id="setBitrate" placeholder="192k" />
-            </label>
-            <label class="form-field">
-              <span>编码预设</span>
-              <select id="setPreset" class="select">
-                <option value="veryfast">veryfast</option>
-                <option value="fast">fast</option>
-                <option value="medium" selected>medium</option>
-                <option value="slow">slow</option>
-              </select>
-            </label>
-            <label class="form-field">
-              <span>最大并行任务</span>
-              <input type="number" id="setConcurrent" min="1" max="8" value="2" />
-            </label>
-            <label class="form-field">
-              <span>浏览器 Cookie</span>
-              <select id="setCookies" class="select">
-                <option value="">不使用</option>
-                <option value="edge">Edge</option>
-                <option value="chrome">Chrome</option>
-                <option value="firefox">Firefox</option>
-              </select>
-            </label>
-            <label class="form-field">
-              <span>Cookie 文件（Netscape 格式）</span>
-              <input type="text" id="setCookieFile" placeholder="cookies.txt 路径（可选）" />
-            </label>
-            <label class="form-field">
-              <span>下载命名模板</span>
-              <input type="text" id="setNaming" placeholder="%(title).180B.%(ext)s" />
-            </label>
-            <label class="form-field">
-              <span>画质 CRF（数值越小越清晰）</span>
-              <input type="number" id="setCrf" min="0" max="51" value="23" />
-            </label>
-            <label class="form-field">
-              <span>外观</span>
-              <select id="setDark" class="select">
-                <option value="false">浅色（默认）</option>
-                <option value="true">深色模式</option>
-              </select>
-            </label>
+
+          <div class="settings-section">
+            <h3 class="settings-section-title">常规</h3>
+            <div class="form-grid form-grid-3">
+              <label class="form-field">
+                <span>下载目录</span>
+                <input type="text" id="setDownloadDir" placeholder="downloads" />
+              </label>
+              <label class="form-field">
+                <span>转换目录</span>
+                <input type="text" id="setConvertedDir" placeholder="converted" />
+              </label>
+              <label class="form-field">
+                <span>最大并行任务</span>
+                <input type="number" id="setConcurrent" min="1" max="8" value="2" />
+              </label>
+              <label class="form-field">
+                <span>主题</span>
+                <select id="setDark" class="select">
+                  <option value="false">浅色（默认）</option>
+                  <option value="true">深色模式</option>
+                </select>
+              </label>
+            </div>
           </div>
+
+          <div class="settings-section">
+            <h3 class="settings-section-title">下载</h3>
+            <div class="form-grid form-grid-3">
+              <label class="form-field">
+                <span>命名模板</span>
+                <input type="text" id="setNaming" placeholder="%(title).180B.%(ext)s" />
+              </label>
+              <label class="form-field">
+                <span>浏览器 Cookie</span>
+                <select id="setCookies" class="select">
+                  <option value="">不使用</option>
+                  <option value="edge">Edge</option>
+                  <option value="chrome">Chrome</option>
+                  <option value="firefox">Firefox</option>
+                </select>
+              </label>
+              <label class="form-field">
+                <span>Cookie 文件（Netscape）</span>
+                <input type="text" id="setCookieFile" placeholder="cookies.txt 路径（可选）" />
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3 class="settings-section-title">转换</h3>
+            <div class="form-grid form-grid-3">
+              <label class="form-field">
+                <span>编码预设</span>
+                <select id="setPreset" class="select">
+                  <option value="veryfast">veryfast</option>
+                  <option value="fast">fast</option>
+                  <option value="medium" selected>medium</option>
+                  <option value="slow">slow</option>
+                </select>
+              </label>
+              <label class="form-field">
+                <span>音频码率</span>
+                <input type="text" id="setBitrate" placeholder="192k" />
+              </label>
+              <label class="form-field">
+                <span>画质 CRF（越小越清晰）</span>
+                <input type="number" id="setCrf" min="0" max="51" value="23" />
+              </label>
+            </div>
+          </div>
+
           <div class="hint-line">提示：浏览器 Cookie 需关闭浏览器后才能读取；推荐用浏览器插件导出 Netscape 格式 cookies.txt 填到"Cookie 文件"。</div>
           <div class="settings-actions">
             <button id="settingsSave" class="btn btn-primary">保存设置</button>
