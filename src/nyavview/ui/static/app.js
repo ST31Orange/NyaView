@@ -241,21 +241,36 @@ $("biliPickFolder").addEventListener("click", () => {
 
 /* -------- download -------- */
 
+function collectPlaylistItems() {
+  const mode = $("dlParts").value;
+  if (mode === "all") return "1-9999";
+  if (mode === "range") {
+    const range = ($("dlPartsRange").value || "").trim();
+    if (!range) { toast("请输入分P范围，例如 1-3 或 1,3,5", "error"); return null; }
+    return range;
+  }
+  return null; // single P
+}
+
 function collectDownload() {
   const cookiesSel = $("dlCookies").value;
   let cookieFile = null;
   let cookiesFromBrowser = null;
   if (cookiesSel === "file") {
-    cookieFile = $("dlCookieFileValue") ? $("dlCookieFileValue").textContent : null;
+    cookieFile = state.cookieFile || null;
   } else if (cookiesSel) {
     cookiesFromBrowser = cookiesSel;
   }
+  const items = collectPlaylistItems();
+  if (items === null && $("dlParts").value === "range") return null;
   return {
     destination: state.dlDir,
     audioOnly: $("dlAudioOnly").checked,
     overwrite: $("dlOverwrite").checked,
     cookieFile,
     cookiesFromBrowser,
+    playlistItems: items,
+    preferH264: $("dlQuality").value === "h264",
   };
 }
 
@@ -263,6 +278,7 @@ $("downloadBtn").addEventListener("click", () => {
   const url = $("downloadUrl").value.trim();
   if (!url) { toast("请先粘贴下载链接", "error"); return; }
   const options = collectDownload();
+  if (!options) return;
   api().start_download(url, options).then((res) => {
     if (res.ok) {
       log("info", `[${res.jobId}] 提交下载：${url}`);
@@ -278,6 +294,25 @@ $("downloadUrl").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("downloadBtn").click();
 });
 
+/* multi-P select: show the range input when '指定范围' is chosen */
+$("dlParts").addEventListener("change", () => {
+  $("dlPartsRange").style.display = $("dlParts").value === "range" ? "" : "none";
+});
+
+/* cookie file: show the picker when '使用 Cookie 文件' is chosen */
+$("dlCookies").addEventListener("change", () => {
+  $("dlCookiePick").style.display = $("dlCookies").value === "file" ? "" : "none";
+});
+
+$("dlCookiePick").addEventListener("click", () => {
+  api().pick_file("选择 Cookie 文件").then((path) => {
+    if (path) {
+      state.cookieFile = path;
+      $("dlCookiePath").textContent = `Cookie 文件：${path}`;
+    }
+  });
+});
+
 /* -------- convert -------- */
 
 $("cvStart").addEventListener("click", () => {
@@ -287,6 +322,7 @@ $("cvStart").addEventListener("click", () => {
     destination: state.cvDir,
     overwrite: $("cvOverwrite").checked,
     preset: $("cvPreset").value,
+    videoCrf: parseInt($("cvQuality").value, 10),
     audioBitrate: $("cvBitrate").value,
   };
   api().start_convert(source, options).then((res) => {

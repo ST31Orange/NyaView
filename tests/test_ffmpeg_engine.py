@@ -46,14 +46,20 @@ def test_build_args_uses_preset_and_bitrate() -> None:
 
 
 def test_build_args_max_compatibility() -> None:
-    """Output must be forced to 8-bit 4:2:0 High profile at CRF 20 so old
-    players (QQ影音) accept it — 10-bit/4:4:4 sources would break them."""
+    """Output must be forced to 8-bit 4:2:0 High profile so old players
+    (QQ影音) accept it — 10-bit/4:4:4 sources would break them."""
     args = _engine()._build_args(
         [Path("a.mkv")], Path("o.mp4"), audio_mode="encode", overwrite=False
     )
     assert args[args.index("-pix_fmt") + 1] == "yuv420p"
     assert args[args.index("-profile:v") + 1] == "high"
-    assert args[args.index("-crf") + 1] == "20"
+    assert args[args.index("-crf") + 1] == "23"  # default standard quality
+
+
+def test_build_args_uses_video_crf() -> None:
+    engine = FfmpegTranscoder(Settings(ffmpeg_path=Path("ffmpeg"), video_crf=18))
+    args = engine._build_args([Path("a.mkv")], Path("o.mp4"), audio_mode="encode", overwrite=False)
+    assert args[args.index("-crf") + 1] == "18"
 
 
 def test_cache_roots_detects_direct_root(tmp_path: Path) -> None:
@@ -63,13 +69,15 @@ def test_cache_roots_detects_direct_root(tmp_path: Path) -> None:
 
 
 def test_cache_roots_treats_parent_as_root_when_nested(tmp_path: Path) -> None:
-    """A parent containing cache folders counts as a root itself (matches
-    the original rglob-based semantics)."""
-    one = tmp_path / "one"
-    one.mkdir()
-    (one / "entry.json").write_text("{}", encoding="utf-8")
+    """A parent containing cache folders converts EACH child that directly
+    holds entry.json (multi-cache one-pass conversion)."""
+    for name in ("one", "two"):
+        child = tmp_path / name
+        child.mkdir()
+        (child / "entry.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "notacache").mkdir()
     engine = _engine()
-    assert engine.cache_roots(tmp_path) == [tmp_path]
+    assert engine.cache_roots(tmp_path) == [tmp_path / "one", tmp_path / "two"]
 
 
 def test_cache_roots_raises_when_none(tmp_path: Path) -> None:
@@ -109,8 +117,11 @@ def test_title_falls_back_to_folder_name(tmp_path: Path) -> None:
     assert FfmpegTranscoder._title(tmp_path) == tmp_path.name
 
 
-def test_has_entry_json_bounded_depth(tmp_path: Path) -> None:
+def test_cache_roots_ignores_nested_only_entry(tmp_path: Path) -> None:
+    """entry.json nested two levels deep without a root-level one is not
+    treated as a cache root (bounded scan semantics)."""
     nested = tmp_path / "a" / "b"
     nested.mkdir(parents=True)
     (nested / "entry.json").write_text("{}", encoding="utf-8")
-    assert FfmpegTranscoder._has_entry_json(tmp_path)
+    with pytest.raises(TranscodeError):
+        _engine().cache_roots(tmp_path)

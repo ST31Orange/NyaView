@@ -62,6 +62,22 @@
           </div>
           <div class="path-line" id="dlDirPath">未选择（使用默认目录）</div>
           <div class="option-row">
+            <label class="field-label" for="dlParts">多P/分P</label>
+            <select id="dlParts" class="select">
+              <option value="" selected>仅第 1 P</option>
+              <option value="all">全部 P</option>
+              <option value="range">指定范围…</option>
+            </select>
+            <input id="dlPartsRange" class="select parts-input" type="text"
+                   placeholder="如 1-3 或 1,3,5" style="display:none" spellcheck="false" />
+            <span class="spacer"></span>
+            <label class="field-label" for="dlQuality">画质</label>
+            <select id="dlQuality" class="select">
+              <option value="best" selected>最佳</option>
+              <option value="h264">H.264 优先（最兼容）</option>
+            </select>
+          </div>
+          <div class="option-row">
             <label class="field-label" for="dlCookies">Cookie</label>
             <select id="dlCookies" class="select">
               <option value="">不使用</option>
@@ -70,15 +86,17 @@
               <option value="firefox">从浏览器读取（Firefox）</option>
               <option value="file">使用 Cookie 文件…</option>
             </select>
+            <button id="dlCookiePick" class="btn btn-ghost path-pick" style="display:none">选择文件</button>
           </div>
-          <div class="hint-line">提示：若浏览器正在运行导致 Cookie 读取失败，将自动切换为无 Cookie 下载。</div>
+          <div class="hint-line" id="dlCookiePath"></div>
+          <div class="hint-line">提示：浏览器 Cookie 需关闭浏览器后才能读取；读取失败会自动回退为无 Cookie 下载。</div>
         </div>
       </section>
 
       <!-- -------- Convert -------- -->
       <section class="panel" id="panel-convert" data-panel="convert">
         <div class="grid-2">
-          <div class="card">
+          <div class="card convert-card">
             <h2 class="card-title">本地视频 → MP4</h2>
             <p class="card-sub">把任意格式（MKV / MOV / AVI / FLV…）重编码为兼容性最好的 H.264 + AAC MP4。</p>
             <button id="cvPickFile" class="btn btn-ghost btn-block">选择视频文件</button>
@@ -90,6 +108,15 @@
                 <option value="fast">fast（更快）</option>
                 <option value="slow">slow（更小）</option>
                 <option value="veryfast">veryfast（最快）</option>
+              </select>
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="cvQuality">画质</label>
+              <select id="cvQuality" class="select">
+                <option value="23" selected>标准（文件较小）</option>
+                <option value="20">高质量（文件较大）</option>
+                <option value="18">超高（文件最大）</option>
+                <option value="28">低（文件最小）</option>
               </select>
             </div>
             <div class="option-row">
@@ -111,14 +138,16 @@
               <button id="cvDirPick" class="btn btn-ghost path-pick">选择目录</button>
             </div>
             <div class="path-line" id="cvDirPath">未选择（使用默认目录）</div>
-            <button id="cvStart" class="btn btn-primary btn-block">开始转换</button>
+            <div class="card-actions">
+              <button id="cvStart" class="btn btn-primary btn-block">开始转换</button>
+            </div>
           </div>
 
-          <div class="card">
+          <div class="card convert-card">
             <h2 class="card-title">Bilibili 缓存 → MP4</h2>
             <p class="card-sub">把客户端缓存的 <code>entry.json + video.m4s + audio.m4s</code> 合并为单个 MP4，视频重编码、音频直拷。</p>
             <button id="biliPickFolder" class="btn btn-ghost btn-block">选择缓存文件夹</button>
-            <div class="path-line" id="biliPath">未选择文件夹（需包含 entry.json）</div>
+            <div class="path-line" id="biliPath">未选择文件夹（含多个 entry.json 的子文件夹可一次转换）</div>
             <div class="option-row">
               <label class="field-label" for="biliConcurrent">并行任务</label>
               <select id="biliConcurrent" class="select">
@@ -138,7 +167,9 @@
               <button id="biliDirPick" class="btn btn-ghost path-pick">选择目录</button>
             </div>
             <div class="path-line" id="biliDirPath">未选择（使用默认目录）</div>
-            <button id="biliStart" class="btn btn-primary btn-block">开始转换</button>
+            <div class="card-actions">
+              <button id="biliStart" class="btn btn-primary btn-block">开始转换</button>
+            </div>
           </div>
         </div>
       </section>

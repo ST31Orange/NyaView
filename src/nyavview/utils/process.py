@@ -14,6 +14,8 @@ Replaces the previous all-in-memory ``communicate()`` wrapper:
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Sequence
 
@@ -54,10 +56,16 @@ async def run_process(
         A :class:`RunResult` with the combined captured output.
     """
     strings = [str(value) for value in args]
+    creationflags = 0
+    if sys.platform == "win32":
+        # Prevent ffmpeg/yt-dlp console windows from popping up when launched
+        # from the GUI app.
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = await asyncio.create_subprocess_exec(
         *strings,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        creationflags=creationflags,
     )
 
     async def _drain(stream: asyncio.StreamReader, stream_name: str, sink: list[str]) -> None:

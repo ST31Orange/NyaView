@@ -244,36 +244,29 @@ class FfmpegTranscoder:
 
         return list(await asyncio.gather(*(_one(root) for root in roots)))
 
-        return list(await asyncio.gather(*(_one(root) for root in roots)))
-
     # --------------------------------------------------------------- lookup
 
     def cache_roots(self, source: Path) -> list[Path]:
-        """Return Bilibili cache folders matching ``entry.json`` under source."""
+        """Return every Bilibili cache root under ``source``.
+
+        A cache root is a folder that directly contains ``entry.json``. If
+        ``source`` itself is one, it is returned; otherwise every immediate
+        child folder that is a cache root is returned, so a parent folder with
+        several cache folders converts them all in one pass.
+        """
         source = Path(source).expanduser().resolve()
         if source.is_file():
             raise TranscodeError("cache conversion needs a folder, not a file")
-        if self._has_entry_json(source):
+        if (source / "entry.json").is_file():
             return [source]
         roots = [
             child
             for child in sorted(source.iterdir())
-            if child.is_dir() and self._has_entry_json(child)
+            if child.is_dir() and (child / "entry.json").is_file()
         ]
         if not roots:
             raise TranscodeError(f"No Bilibili cache folder found in {source}")
         return roots
-
-    @staticmethod
-    def _has_entry_json(path: Path) -> bool:
-        """Bounded-depth scan for ``entry.json`` (avoids full-tree rglob)."""
-        if (path / "entry.json").is_file():
-            return True
-        for depth in range(1, 3):
-            pattern = "/".join(["*"] * depth + ["entry.json"])
-            if any(candidate.is_file() for candidate in path.glob(pattern)):
-                return True
-        return False
 
     @staticmethod
     def _find_m4s_pair(root: Path) -> M4sPair:

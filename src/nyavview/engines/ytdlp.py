@@ -70,21 +70,34 @@ class YtDlpEngine:
             )
         )
 
-    def _opts(self, destination: Path, *, audio_only: bool, overwrite: bool) -> dict[str, Any]:
+    def _opts(
+        self,
+        destination: Path,
+        *,
+        audio_only: bool,
+        overwrite: bool,
+        playlist_items: Optional[str] = None,
+        prefer_h264: bool = True,
+    ) -> dict[str, Any]:
         opts: dict[str, Any] = {
             "outtmpl": str(destination / "%(title).180B.%(ext)s"),
-            "noplaylist": True,
+            # Multi-part (Bilibili 多P): keep playlist semantics but restrict
+            # to the requested range; when None, single video (first P only).
+            "noplaylist": playlist_items is None,
             "quiet": True,
             "no_warnings": True,
             "ignoreconfig": True,
             "noprogress": True,  # progress is driven through hooks
             "progress_hooks": [self._hook],
-            # Prefer H.264 so the result plays everywhere (Windows built-in
-            # players do not decode AV1/HEVC without codec extensions).
-            "format_sort": ["vcodec:h264"],
+            # Default: prefer H.264 so the result plays everywhere (Windows
+            # built-in players do not decode AV1/HEVC without codec
+            # extensions). prefer_h264=False keeps yt-dlp's best-quality sort.
+            "format_sort": ["vcodec:h264"] if prefer_h264 else None,
             "concurrent_fragment_downloads": 4,
             "ffmpeg_location": self.settings.resolve_ffmpeg(),
         }
+        if playlist_items:
+            opts["playlist_items"] = playlist_items
         if self.settings.cookies_from_browser:
             opts["cookiesfrombrowser"] = (self.settings.cookies_from_browser,)
         elif self.settings.cookie_file:
@@ -137,12 +150,22 @@ class YtDlpEngine:
         lowered = (message or "").lower()
         return "cookie" in lowered and ("could not copy" in lowered or "database" in lowered)
 
-    def _run(self, url: str, destination: Path, audio_only: bool, overwrite: bool) -> Path:
+    def _run(
+        self,
+        url: str,
+        destination: Path,
+        audio_only: bool,
+        overwrite: bool,
+        playlist_items: Optional[str] = None,
+        prefer_h264: bool = True,
+    ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415 - imported lazily to keep import cost out of CLI path
         from yt_dlp import YoutubeDL
 
         try:
-            return self._run_once(url, destination, audio_only, overwrite, YoutubeDL)
+            return self._run_once(
+                url, destination, audio_only, overwrite, YoutubeDL, playlist_items, prefer_h264
+            )
         except yt_dlp.utils.DownloadError as exc:
             message = str(exc)
             # Browser cookie DBs are locked while the browser runs. Retry
@@ -161,7 +184,9 @@ class YtDlpEngine:
                 engine = YtDlpEngine(original, on_progress=self._on_progress)
                 engine._cancel = self._cancel
                 try:
-                    return engine._run_once(url, destination, audio_only, overwrite, YoutubeDL)
+                    return engine._run_once(
+                        url, destination, audio_only, overwrite, YoutubeDL, playlist_items, prefer_h264
+                    )
                 except yt_dlp.utils.DownloadError as retry_exc:
                     raise DownloadError(str(retry_exc)) from retry_exc
             raise DownloadError(message) from exc
@@ -173,10 +198,18 @@ class YtDlpEngine:
         audio_only: bool,
         overwrite: bool,
         ydl_cls,
+        playlist_items: Optional[str] = None,
+        prefer_h264: bool = True,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415
 
-        opts = self._opts(destination, audio_only=audio_only, overwrite=overwrite)
+        opts = self._opts(
+            destination,
+            audio_only=audio_only,
+            overwrite=overwrite,
+            playlist_items=playlist_items,
+            prefer_h264=prefer_h264,
+        )
         try:
             with ydl_cls(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -216,9 +249,13 @@ class YtDlpEngine:
         *,
         audio_only: bool = False,
         overwrite: bool = False,
+        playlist_items: Optional[str] = None,
+        prefer_h264: bool = True,
     ) -> Path:
         destination = Path(destination).expanduser().resolve()
         destination.mkdir(parents=True, exist_ok=True)
         self._cancel.clear()
         # YoutubeDL is blocking; keep an async signature by running it in a thread.
-        return await asyncio.to_thread(self._run, url, destination, audio_only, overwrite)
+        return await asyncio.to_thread(
+            self._run, url, destination, audio_only, overwrite, playlist_items, prefer_h264
+        )

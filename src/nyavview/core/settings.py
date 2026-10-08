@@ -32,7 +32,7 @@ class Settings(BaseModel):
     cookies_from_browser: Optional[str] = None
     audio_bitrate: str = "192k"
     video_preset: str = "medium"
-    video_crf: int = Field(default=20, ge=0, le=51)
+    video_crf: int = Field(default=23, ge=0, le=51)
     overwrite: bool = False
     max_concurrent_tasks: int = Field(default=2, ge=1, le=8)
 

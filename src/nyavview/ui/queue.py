@@ -177,6 +177,8 @@ class JobManager:
         overrides: dict[str, Any] = {}
         if options.get("preset"):
             overrides["video_preset"] = str(options["preset"])
+        if options.get("videoCrf"):
+            overrides["video_crf"] = int(options["videoCrf"])
         if options.get("audioBitrate"):
             overrides["audio_bitrate"] = str(options["audioBitrate"])
         if options.get("maxConcurrentTasks"):
@@ -202,6 +204,8 @@ class JobManager:
                 destination,
                 audio_only=bool(options.get("audioOnly")),
                 overwrite=bool(options.get("overwrite")),
+                playlist_items=options.get("playlistItems") or None,
+                prefer_h264=bool(options.get("preferH264", True)),
             )
             self._finish(job)
         except asyncio.CancelledError:

@@ -227,6 +227,17 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+  align-items: stretch;
+}
+
+.convert-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.convert-card .card-actions {
+  margin-top: auto;
+  padding-top: 16px;
 }
 
 @media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
@@ -407,6 +418,12 @@ body {
   font-size: 12px;
   color: var(--text-faint);
   word-break: break-all;
+}
+
+.parts-input {
+  width: 130px;
+  padding: 8px 12px;
+  font-family: var(--mono);
 }
 
 .hint-line {

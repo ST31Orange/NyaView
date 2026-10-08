@@ -40,6 +40,27 @@ def test_opts_registers_progress_hook() -> None:
     assert hooks[0].__func__ is engine._hook.__func__
 
 
+def test_opts_multi_part() -> None:
+    """Multi-part (多P): playlist_items enables the playlist and restricts P."""
+    engine = _engine()
+    opts = engine._opts(
+        Path("d"), audio_only=False, overwrite=False, playlist_items="1-3"
+    )
+    assert opts["noplaylist"] is False
+    assert opts["playlist_items"] == "1-3"
+    # single P keeps noplaylist
+    single = engine._opts(Path("d"), audio_only=False, overwrite=False)
+    assert single["noplaylist"] is True
+
+
+def test_opts_prefer_h264_default_and_off() -> None:
+    engine = _engine()
+    default = engine._opts(Path("d"), audio_only=False, overwrite=False)
+    assert default["format_sort"] == ["vcodec:h264"]
+    best = engine._opts(Path("d"), audio_only=False, overwrite=False, prefer_h264=False)
+    assert best["format_sort"] is None
+
+
 def test_hook_emits_progress_event() -> None:
     events = []
     engine = YtDlpEngine(Settings(), on_progress=events.append)
@@ -91,7 +112,7 @@ def test_run_falls_back_when_cookie_db_locked(monkeypatch) -> None:
 
     calls: list[str] = []
 
-    def fake_run_once(self, url, destination, audio_only, overwrite, ydl_cls):
+    def fake_run_once(self, url, destination, audio_only, overwrite, ydl_cls, playlist_items=None, prefer_h264=True):
         calls.append(str(self.settings.cookies_from_browser))
         if self.settings.cookies_from_browser:
             raise yt_dlp.utils.DownloadError(
