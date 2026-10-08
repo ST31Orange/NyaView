@@ -112,7 +112,9 @@ def test_run_falls_back_when_cookie_db_locked(monkeypatch) -> None:
 
     calls: list[str] = []
 
-    def fake_run_once(self, url, destination, audio_only, overwrite, ydl_cls, playlist_items=None, prefer_h264=True):
+    def fake_run_once(self, url, destination, audio_only, overwrite, ydl_cls,
+                      playlist_items=None, prefer_h264=True, write_subs=False,
+                      outtmpl=None, format_id=None):
         calls.append(str(self.settings.cookies_from_browser))
         if self.settings.cookies_from_browser:
             raise yt_dlp.utils.DownloadError(

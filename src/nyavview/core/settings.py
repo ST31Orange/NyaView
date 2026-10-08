@@ -33,6 +33,8 @@ class Settings(BaseModel):
     audio_bitrate: str = "192k"
     video_preset: str = "medium"
     video_crf: int = Field(default=23, ge=0, le=51)
+    naming_template: str = "%(title).180B.%(ext)s"
+    dark_mode: bool = False
     overwrite: bool = False
     max_concurrent_tasks: int = Field(default=2, ge=1, le=8)
 

@@ -286,6 +286,17 @@ class ProcessTimeoutError(EngineError): ...
    - **B 站多P选择**：新增"多P/分P"下拉（仅第1P / 全部P / 指定范围 `1-3` 或 `1,3,5`），引擎 `_opts` 在指定时设 `noplaylist=False` + `playlist_items`，否则保持单P。
    - **转换页布局**：两卡片改 `convert-card`（flex 纵向、按钮 `margin-top:auto` 底部对齐），视觉等高等齐；同时修正 `cache_roots` 支持"所选文件夹内含多个 entry.json 子文件夹时一次全部转换"（原语义把父目录当单一根，会错误配对 m4s）。
    - **画质选项**：下载页新增"画质"（最佳 / H.264 优先），引擎 `prefer_h264` 布尔控制 `format_sort`（默认 H.264 优先保兼容）。
+12. **十项产品化改进（用户确认全部实施）**：
+   - **A B站登录质量**：设置面板新增"Cookie 文件（Netscape 格式）"输入并持久化到 `~/.nyavview.toml`，配合引导提示；下载页可选浏览器 Cookie 或文件 Cookie。
+   - **B 批量队列拖拽**：转换页两个卡片加拖拽区（`drop-zone`），文件/文件夹直接拖入即选中；`setupDropZone` 读取 `dataTransfer.files[].path`。
+   - **C 格式选择面板**：新增 `YtDlpEngine.preview()`（`skip_download` 提取 title/thumbnail/formats，按 height+fps 去重排序）；下载页粘贴链接后 900ms 防抖自动预览，显示标题/封面/时长/UP主，清晰度下拉选择后以 `format_id+bestaudio` 下载。
+   - **D 断点续传与重试**：`_run_download` 支持 `maxRetries`（默认 3），仅对瞬时错误（network/timeout/5xx/429/403）自动重试并提示；yt-dlp 自带断点续传（`.part` 续传）。
+   - **E 标题/封面预览**：与 C 共用 `preview()`，预览卡显示标题/封面/时长/UP主/分P数。
+   - **F 完成后打开文件夹**：队列完成任务显示"打开文件夹"按钮，`Api.open_folder()` 用 `explorer`（Windows）/`xdg-open` 打开所在目录。
+   - **G 字幕下载**：下载选项"下载字幕（B站CC/YouTube）"，引擎设 `writesubtitles`+`writeautomaticsub`+`subtitleslangs=[zh-Hans,zh-CN,zh,en]`。
+   - **H 批量命名规则**：新增 `Settings.naming_template`（默认 `%(title).180B.%(ext)s`），下载页"命名模板"输入 + 设置页持久化，`_opts` 用其作 `outtmpl`。
+   - **I 深色模式**：CSS `body.dark` 变量覆盖（Claude 风深色：暖黑底 `#262624`、米白文字、陶土强调），设置页切换并持久化，启动时应用。
+   - **J 自动更新检查**：`checkUpdate()` 启动时 fetch 静态版本清单（`version.json`），发现新版本日志+toast 提示（不自动安装）。
 
 ---
 

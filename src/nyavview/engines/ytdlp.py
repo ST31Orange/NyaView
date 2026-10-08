@@ -78,9 +78,13 @@ class YtDlpEngine:
         overwrite: bool,
         playlist_items: Optional[str] = None,
         prefer_h264: bool = True,
+        write_subs: bool = False,
+        outtmpl: Optional[str] = None,
+        format_id: Optional[str] = None,
     ) -> dict[str, Any]:
         opts: dict[str, Any] = {
-            "outtmpl": str(destination / "%(title).180B.%(ext)s"),
+            # Custom naming template (H) or default "<title>.180B.<ext>".
+            "outtmpl": str(destination / (outtmpl or "%(title).180B.%(ext)s")),
             # Multi-part (Bilibili 多P): keep playlist semantics but restrict
             # to the requested range; when None, single video (first P only).
             "noplaylist": playlist_items is None,
@@ -98,6 +102,13 @@ class YtDlpEngine:
         }
         if playlist_items:
             opts["playlist_items"] = playlist_items
+        if write_subs:
+            # Subtitles (G): embed best subtitles; Bilibili CC + site subs.
+            opts["writesubtitles"] = True
+            opts["writeautomaticsub"] = True
+            opts["subtitleslangs"] = ["zh-Hans", "zh-CN", "zh", "en"]
+            opts["embedsubtitles"] = False
+            opts["skip_removing_subtitles"] = False
         if self.settings.cookies_from_browser:
             opts["cookiesfrombrowser"] = (self.settings.cookies_from_browser,)
         elif self.settings.cookie_file:
@@ -112,7 +123,11 @@ class YtDlpEngine:
                 }
             ]
         else:
-            opts["format"] = "bestvideo+bestaudio/best"
+            if format_id:
+                # User picked a specific video format (C): use it with best audio.
+                opts["format"] = f"{format_id}+bestaudio/best"
+            else:
+                opts["format"] = "bestvideo+bestaudio/best"
             opts["merge_output_format"] = "mp4"
         if overwrite:
             opts["overwrites"] = True
@@ -158,13 +173,17 @@ class YtDlpEngine:
         overwrite: bool,
         playlist_items: Optional[str] = None,
         prefer_h264: bool = True,
+        write_subs: bool = False,
+        outtmpl: Optional[str] = None,
+        format_id: Optional[str] = None,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415 - imported lazily to keep import cost out of CLI path
         from yt_dlp import YoutubeDL
 
         try:
             return self._run_once(
-                url, destination, audio_only, overwrite, YoutubeDL, playlist_items, prefer_h264
+                url, destination, audio_only, overwrite, YoutubeDL,
+                playlist_items, prefer_h264, write_subs, outtmpl, format_id,
             )
         except yt_dlp.utils.DownloadError as exc:
             message = str(exc)
@@ -185,7 +204,8 @@ class YtDlpEngine:
                 engine._cancel = self._cancel
                 try:
                     return engine._run_once(
-                        url, destination, audio_only, overwrite, YoutubeDL, playlist_items, prefer_h264
+                        url, destination, audio_only, overwrite, YoutubeDL,
+                        playlist_items, prefer_h264, write_subs, outtmpl, format_id,
                     )
                 except yt_dlp.utils.DownloadError as retry_exc:
                     raise DownloadError(str(retry_exc)) from retry_exc
@@ -200,6 +220,9 @@ class YtDlpEngine:
         ydl_cls,
         playlist_items: Optional[str] = None,
         prefer_h264: bool = True,
+        write_subs: bool = False,
+        outtmpl: Optional[str] = None,
+        format_id: Optional[str] = None,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415
 
@@ -209,6 +232,9 @@ class YtDlpEngine:
             overwrite=overwrite,
             playlist_items=playlist_items,
             prefer_h264=prefer_h264,
+            write_subs=write_subs,
+            outtmpl=outtmpl,
+            format_id=format_id,
         )
         try:
             with ydl_cls(opts) as ydl:
@@ -251,11 +277,83 @@ class YtDlpEngine:
         overwrite: bool = False,
         playlist_items: Optional[str] = None,
         prefer_h264: bool = True,
+        write_subs: bool = False,
+        outtmpl: Optional[str] = None,
+        format_id: Optional[str] = None,
     ) -> Path:
         destination = Path(destination).expanduser().resolve()
         destination.mkdir(parents=True, exist_ok=True)
         self._cancel.clear()
         # YoutubeDL is blocking; keep an async signature by running it in a thread.
         return await asyncio.to_thread(
-            self._run, url, destination, audio_only, overwrite, playlist_items, prefer_h264
+            self._run,
+            url,
+            destination,
+            audio_only,
+            overwrite,
+            playlist_items,
+            prefer_h264,
+            write_subs,
+            outtmpl,
+            format_id,
         )
+
+    async def preview(self, url: str) -> dict[str, Any]:
+        """Extract metadata without downloading (C/E: formats, title, thumb)."""
+        import asyncio as _aio
+
+        def _run() -> dict[str, Any]:
+            from yt_dlp import YoutubeDL
+
+            opts = self._opts(
+                Path("."),
+                audio_only=False,
+                overwrite=False,
+                playlist_items=None,
+                prefer_h264=True,
+            )
+            opts["skip_download"] = True
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            if isinstance(info, list):
+                info = info[-1] if info else {}
+            if info and info.get("entries") and not info.get("_type") == "playlist":
+                info = info["entries"][0] if info["entries"] else info
+            entries = info.get("entries") or []
+            formats = []
+            seen = set()
+            for f in (info.get("formats") or []):
+                if not f.get("format_id"):
+                    continue
+                key = (f.get("format_id"), f.get("height"), f.get("vcodec"), f.get("acodec"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                vcodec = f.get("vcodec") or "audio"
+                if vcodec == "none":
+                    continue  # skip audio-only formats in the video list
+                formats.append(
+                    {
+                        "id": f.get("format_id"),
+                        "height": f.get("height"),
+                        "fps": f.get("fps"),
+                        "vcodec": (vcodec or "").split(".")[0],
+                        "ext": f.get("ext"),
+                        "filesize": f.get("filesize") or f.get("filesize_approx"),
+                    }
+                )
+            formats.sort(key=lambda x: (x["height"] or 0, x["fps"] or 0), reverse=True)
+            # dedupe by height keeping the first (best) entry
+            by_height: dict[Any, Any] = {}
+            for fmt in formats:
+                by_height.setdefault(fmt["height"], fmt)
+            return {
+                "title": info.get("title"),
+                "uploader": info.get("uploader") or info.get("channel"),
+                "duration": info.get("duration"),
+                "thumbnail": info.get("thumbnail"),
+                "playlistCount": len(entries),
+                "formats": list(by_height.values()),
+            }
+
+        return await _aio.to_thread(_run)

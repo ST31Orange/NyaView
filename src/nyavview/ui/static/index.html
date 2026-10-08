@@ -45,6 +45,37 @@
                    placeholder="粘贴视频链接，例如 https://www.bilibili.com/video/BVxxxxxx" spellcheck="false" />
             <button id="downloadBtn" class="btn btn-primary">开始下载</button>
           </div>
+          <!-- Preview card (E): title/thumbnail + format picker (C) -->
+          <div id="dlPreview" class="preview-card" style="display:none">
+            <img id="dlPreviewThumb" class="preview-thumb" alt="" />
+            <div class="preview-info">
+              <div id="dlPreviewTitle" class="preview-title"></div>
+              <div id="dlPreviewMeta" class="preview-meta"></div>
+              <div class="option-row preview-formats-row">
+                <label class="field-label" for="dlFormat">清晰度</label>
+                <select id="dlFormat" class="select"></select>
+                <span class="spacer"></span>
+                <button id="dlPreviewClose" class="btn btn-ghost btn-sm">关闭</button>
+              </div>
+            </div>
+          </div>
+          <div class="option-row">
+            <label class="toggle">
+              <input type="checkbox" id="dlWriteSubs" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">下载字幕（B站CC/YouTube）</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="dlAutoRetry" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">失败自动重试</span>
+            </label>
+          </div>
+          <div class="option-row">
+            <label class="field-label" for="dlNaming">命名模板</label>
+            <input id="dlNaming" class="select naming-input" type="text"
+                   placeholder="%(title).180B.%(ext)s" spellcheck="false" />
+          </div>
           <div class="option-row">
             <label class="toggle">
               <input type="checkbox" id="dlAudioOnly" />
@@ -99,6 +130,7 @@
           <div class="card convert-card">
             <h2 class="card-title">本地视频 → MP4</h2>
             <p class="card-sub">把任意格式（MKV / MOV / AVI / FLV…）重编码为兼容性最好的 H.264 + AAC MP4。</p>
+            <div id="cvDropZone" class="drop-zone">拖拽视频文件到这里，或</div>
             <button id="cvPickFile" class="btn btn-ghost btn-block">选择视频文件</button>
             <div class="path-line" id="cvFilePath">未选择文件</div>
             <div class="option-row">
@@ -146,6 +178,7 @@
           <div class="card convert-card">
             <h2 class="card-title">Bilibili 缓存 → MP4</h2>
             <p class="card-sub">把客户端缓存的 <code>entry.json + video.m4s + audio.m4s</code> 合并为单个 MP4，视频重编码、音频直拷。</p>
+            <div id="biliDropZone" class="drop-zone">拖拽缓存文件夹到这里，或</div>
             <button id="biliPickFolder" class="btn btn-ghost btn-block">选择缓存文件夹</button>
             <div class="path-line" id="biliPath">未选择文件夹（含多个 entry.json 的子文件夹可一次转换）</div>
             <div class="option-row">
@@ -240,7 +273,27 @@
                 <option value="firefox">Firefox</option>
               </select>
             </label>
+            <label class="form-field">
+              <span>Cookie 文件（Netscape 格式）</span>
+              <input type="text" id="setCookieFile" placeholder="cookies.txt 路径（可选）" />
+            </label>
+            <label class="form-field">
+              <span>下载命名模板</span>
+              <input type="text" id="setNaming" placeholder="%(title).180B.%(ext)s" />
+            </label>
+            <label class="form-field">
+              <span>画质 CRF（数值越小越清晰）</span>
+              <input type="number" id="setCrf" min="0" max="51" value="23" />
+            </label>
+            <label class="form-field">
+              <span>外观</span>
+              <select id="setDark" class="select">
+                <option value="false">浅色（默认）</option>
+                <option value="true">深色模式</option>
+              </select>
+            </label>
           </div>
+          <div class="hint-line">提示：浏览器 Cookie 需关闭浏览器后才能读取；推荐用浏览器插件导出 Netscape 格式 cookies.txt 填到"Cookie 文件"。</div>
           <div class="settings-actions">
             <button id="settingsSave" class="btn btn-primary">保存设置</button>
             <span id="settingsMsg" class="settings-msg"></span>

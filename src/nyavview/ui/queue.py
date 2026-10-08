@@ -194,19 +194,51 @@ class JobManager:
     async def _run_download(self, job: Job, url: str, options: dict[str, Any]) -> None:
         settings = self._job_settings(options)
         destination = Path(options.get("destination") or settings.download_dir)
+        max_attempts = int(options.get("maxRetries", 3))
         try:
             job.status = JobStatus.RUNNING
             self._emit({"jobId": job.id, "type": "status", "status": "running"})
             engine = YtDlpEngine(settings, on_progress=lambda e: self._progress(job, e))
             job.engine = engine
-            job.output = await engine.download(
-                url,
-                destination,
-                audio_only=bool(options.get("audioOnly")),
-                overwrite=bool(options.get("overwrite")),
-                playlist_items=options.get("playlistItems") or None,
-                prefer_h264=bool(options.get("preferH264", True)),
-            )
+            attempt = 0
+            last_error: Optional[str] = None
+            while True:
+                attempt += 1
+                if attempt > 1:
+                    self._emit(
+                        {"jobId": job.id, "type": "progress", "kind": "download",
+                         "status": "downloading", "progress": None, "percent": None,
+                         "speed": None, "eta": None,
+                         "detail": f"第 {attempt - 1} 次失败，正在重试（{max_attempts - attempt + 1} 次剩余）…"}
+                    )
+                try:
+                    job.output = await engine.download(
+                        url,
+                        destination,
+                        audio_only=bool(options.get("audioOnly")),
+                        overwrite=bool(options.get("overwrite")),
+                        playlist_items=options.get("playlistItems") or None,
+                        prefer_h264=bool(options.get("preferH264", True)),
+                        write_subs=bool(options.get("writeSubs")),
+                        outtmpl=options.get("outtmpl") or settings.naming_template,
+                        format_id=options.get("format") or None,
+                    )
+                    break
+                except (CanceledError, asyncio.CancelledError):
+                    raise
+                except NyaViewError as exc:
+                    last_error = str(exc)
+                    if attempt >= max_attempts:
+                        raise
+                    # transient errors only: retry on network-ish failures
+                    lowered = (last_error or "").lower()
+                    transient = any(
+                        kw in lowered
+                        for kw in ("network", "timeout", "temporar", "http error 5", "connection", "socket", "429", "403")
+                    )
+                    if not transient:
+                        raise
+                    await asyncio.sleep(2)
             self._finish(job)
         except asyncio.CancelledError:
             # External task.cancel() (ffmpeg subprocess kill path). Mark the

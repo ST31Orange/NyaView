@@ -27,7 +27,10 @@ _UI_KEYS = (
     "cookies_from_browser",
     "audio_bitrate",
     "video_preset",
+    "video_crf",
     "max_concurrent_tasks",
+    "naming_template",
+    "dark_mode",
 )
 
 
@@ -115,7 +118,9 @@ class Api:
                 current = getattr(settings, key)
                 if isinstance(current, Path) and not isinstance(value, Path):
                     setattr(settings, key, Path(str(value)))
-                elif key == "max_concurrent_tasks":
+                elif isinstance(current, bool):
+                    setattr(settings, key, bool(value))
+                elif isinstance(current, int):
                     setattr(settings, key, int(value))
                 else:
                     setattr(settings, key, value)
@@ -149,6 +154,22 @@ class Api:
         return self.pick_folder(title)
 
     # -------------------------------------------------------------- jobs
+
+    def preview(self, url: str) -> dict[str, Any]:
+        """Extract title/thumbnail/formats without downloading (C/E)."""
+        from nyavview.core.settings import Settings
+        from nyavview.engines.ytdlp import YtDlpEngine
+
+        url = (url or "").strip()
+        if not url:
+            return {"ok": False, "error": "请输入链接"}
+        engine = YtDlpEngine(self._manager.settings)
+        try:
+            info = engine.preview(url)
+            info["ok"] = True
+            return info
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     def start_download(self, url: str, options: dict[str, Any]) -> dict[str, Any]:
         url = (url or "").strip()
@@ -191,3 +212,19 @@ class Api:
 
     def poll(self) -> list[dict[str, Any]]:
         return self._manager.poll()
+
+    def open_folder(self, path: str) -> dict[str, Any]:
+        """Open a folder in Explorer (F: 完成后打开所在文件夹)."""
+        import os
+        import subprocess
+
+        target = Path(path).expanduser()
+        folder = target if target.is_dir() else target.parent
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["explorer", str(folder)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}

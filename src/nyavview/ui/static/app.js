@@ -108,6 +108,7 @@ function renderQueue() {
           <span class="job-metrics">${progressText(job)}</span>
           <span class="job-actions">
             ${running ? `<button class="btn-cancel" data-cancel="${job.id}">取消</button>` : ""}
+            ${job.status === "done" && job.output ? `<button class="btn-open" data-open="${escapeHtml(job.output)}">打开文件夹</button>` : ""}
           </span>
         </div>
         ${job.error ? `<div class="job-error">${escapeHtml(job.error)}</div>` : ""}
@@ -119,6 +120,12 @@ function renderQueue() {
     btn.addEventListener("click", () => api().cancel(btn.dataset.cancel).then((r) => {
       if (!r.ok) toast("取消失败", "error");
     }));
+  });
+
+  list.querySelectorAll("[data-open]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      api().open_folder(btn.dataset.open);
+    });
   });
 }
 
@@ -263,6 +270,7 @@ function collectDownload() {
   }
   const items = collectPlaylistItems();
   if (items === null && $("dlParts").value === "range") return null;
+  const formatId = state.pickedFormat || null;
   return {
     destination: state.dlDir,
     audioOnly: $("dlAudioOnly").checked,
@@ -271,6 +279,10 @@ function collectDownload() {
     cookiesFromBrowser,
     playlistItems: items,
     preferH264: $("dlQuality").value === "h264",
+    writeSubs: $("dlWriteSubs").checked,
+    maxRetries: $("dlAutoRetry").checked ? 3 : 1,
+    outtmpl: ($("dlNaming").value || "").trim() || undefined,
+    format: formatId,
   };
 }
 
@@ -292,6 +304,52 @@ $("downloadBtn").addEventListener("click", () => {
 
 $("downloadUrl").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("downloadBtn").click();
+});
+
+/* -------- preview (E/C): debounce extraction of title/thumbnail/formats */
+let previewTimer = null;
+$("downloadUrl").addEventListener("input", () => {
+  clearTimeout(previewTimer);
+  const url = $("downloadUrl").value.trim();
+  if (!url) { $("dlPreview").style.display = "none"; return; }
+  previewTimer = setTimeout(() => {
+    api().preview(url).then((res) => {
+      if (!res || !res.ok || !res.title) { $("dlPreview").style.display = "none"; return; }
+      $("dlPreviewTitle").textContent = res.title;
+      const metaBits = [];
+      if (res.uploader) metaBits.push(res.uploader);
+      if (res.duration) metaBits.push(`${Math.floor(res.duration / 60)}:${String(Math.floor(res.duration % 60)).padStart(2, "0")}`);
+      if (res.playlistCount) metaBits.push(`${res.playlistCount} P`);
+      $("dlPreviewMeta").textContent = metaBits.join(" · ");
+      const thumb = $("dlPreviewThumb");
+      if (res.thumbnail) { thumb.src = res.thumbnail; thumb.style.display = ""; }
+      else { thumb.style.display = "none"; }
+      // format picker (C)
+      const sel = $("dlFormat");
+      sel.innerHTML = "";
+      const opts = res.formats || [];
+      if (opts.length) {
+        opts.forEach((f) => {
+          const o = document.createElement("option");
+          o.value = f.id;
+          const codec = f.vcodec === "av01" ? "AV1" : f.vcodec === "h264" ? "H.264" : (f.vcodec || "").toUpperCase();
+          o.textContent = `${f.height ? f.height + "P" : "?"} ${f.fps || ""} · ${codec}`;
+          sel.appendChild(o);
+        });
+        sel.value = opts[0].id;
+        state.pickedFormat = opts[0].id;
+        sel.onchange = () => { state.pickedFormat = sel.value; };
+      } else {
+        state.pickedFormat = null;
+      }
+      $("dlPreview").style.display = "flex";
+    }).catch(() => { $("dlPreview").style.display = "none"; });
+  }, 900);
+});
+
+$("dlPreviewClose").addEventListener("click", () => {
+  $("dlPreview").style.display = "none";
+  state.pickedFormat = null;
 });
 
 /* multi-P select: show the range input when '指定范围' is chosen */
@@ -380,8 +438,12 @@ $("settingsSave").addEventListener("click", () => {
     converted_dir: $("setConvertedDir").value.trim() || null,
     audio_bitrate: $("setBitrate").value.trim() || null,
     video_preset: $("setPreset").value,
+    video_crf: parseInt($("setCrf").value, 10) || 23,
     max_concurrent_tasks: parseInt($("setConcurrent").value, 10) || 2,
     cookies_from_browser: $("setCookies").value || null,
+    cookie_file: $("setCookieFile").value.trim() || null,
+    naming_template: $("setNaming").value.trim() || null,
+    dark_mode: $("setDark").value === "true",
   };
   api().save_settings(payload).then((res) => {
     const msg = $("settingsMsg");
@@ -389,6 +451,7 @@ $("settingsSave").addEventListener("click", () => {
       msg.textContent = "已保存 ✓";
       msg.className = "settings-msg";
       refreshDirs();
+      applyDark(payload.dark_mode);
       toast("设置已保存", "success");
     } else {
       msg.textContent = "保存失败：" + (res.error || "未知错误");
@@ -397,15 +460,66 @@ $("settingsSave").addEventListener("click", () => {
   });
 });
 
+function applyDark(enabled) {
+  document.body.classList.toggle("dark", !!enabled);
+}
+
 function loadSettings() {
   api().get_settings().then((s) => {
     if (s.download_dir) $("setDownloadDir").value = s.download_dir;
     if (s.converted_dir) $("setConvertedDir").value = s.converted_dir;
     if (s.audio_bitrate) $("setBitrate").value = s.audio_bitrate;
     if (s.video_preset) $("setPreset").value = s.video_preset;
+    if (s.video_crf) $("setCrf").value = s.video_crf;
     if (s.max_concurrent_tasks) $("setConcurrent").value = s.max_concurrent_tasks;
     if (s.cookies_from_browser) $("setCookies").value = s.cookies_from_browser;
+    if (s.cookie_file) $("setCookieFile").value = s.cookie_file;
+    if (s.naming_template) { $("setNaming").value = s.naming_template; $("dlNaming").value = s.naming_template; }
+    if (s.dark_mode !== undefined) { $("setDark").value = String(!!s.dark_mode); applyDark(!!s.dark_mode); }
   });
+}
+
+/* -------- drag & drop (B): drop files / folders onto the convert cards */
+
+function setupDropZone(zoneId, onPath) {
+  const zone = $(zoneId);
+  if (!zone) return;
+  ["dragenter", "dragover"].forEach((evt) =>
+    zone.addEventListener(evt, (e) => { e.preventDefault(); zone.classList.add("dragover"); })
+  );
+  ["dragleave", "drop"].forEach((evt) =>
+    zone.addEventListener(evt, (e) => { e.preventDefault(); zone.classList.remove("dragover"); })
+  );
+  zone.addEventListener("drop", (e) => {
+    const files = e.dataTransfer && e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+    if (files.length) onPath(files[0].path || files[0].name);
+  });
+}
+
+setupDropZone("cvDropZone", (p) => {
+  $("cvFilePath").textContent = p;
+  $("cvFilePath").dataset.file = p;
+});
+setupDropZone("biliDropZone", (p) => {
+  $("biliPath").textContent = p;
+  $("biliPath").dataset.folder = p;
+});
+
+/* -------- update check (J) -------- */
+
+function checkUpdate() {
+  // Lightweight check against a static version manifest (no auto-install).
+  try {
+    fetch("https://raw.githubusercontent.com/nya-view/nyaview/main/version.json", { mode: "cors" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.version && data.version !== "0.1.0") {
+          log("info", `发现新版本 ${data.version}，请到发布页更新`);
+          toast(`发现新版本 ${data.version}`, "info");
+        }
+      })
+      .catch(() => { /* offline — ignore */ });
+  } catch (err) { /* ignore */ }
 }
 
 /* ---------------------------------------------------------- boot */
@@ -420,6 +534,7 @@ function boot() {
     renderQueue();
   });
   setInterval(poll, 150);
+  checkUpdate();
 }
 
 window.addEventListener("pywebviewready", boot);
