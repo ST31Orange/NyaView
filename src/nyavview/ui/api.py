@@ -37,20 +37,29 @@ def load_user_settings() -> Settings:
     return Settings.discover()
 
 
+def _toml_string(value: str) -> str:
+    """Quote a string for a TOML basic string, escaping backslashes/quotes."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def save_user_settings(settings: Settings) -> None:
-    """Persist the UI-relevant subset to ``~/.nyavview.toml``."""
+    """Persist the UI-relevant subset to ``~/.nyavview.toml``.
+
+    Values must be escaped for TOML — on Windows ``str(Path)`` yields
+    backslashes (``D:\\videos``) which are illegal unescaped in TOML.
+    """
     lines = ["# NyaView user settings (managed by the desktop UI)\n"]
     values = settings.model_dump()
     for key in _UI_KEYS:
         value = values.get(key)
         if value is None:
             continue
-        if isinstance(value, Path):
-            lines.append(f'{key} = "{value}"\n')
-        elif isinstance(value, bool):
+        if isinstance(value, bool):
             lines.append(f"{key} = {'true' if value else 'false'}\n")
+        elif isinstance(value, int):
+            lines.append(f"{key} = {value}\n")
         else:
-            lines.append(f"{key} = {value!r}\n")
+            lines.append(f"{key} = {_toml_string(str(value))}\n")
     USER_CONFIG_PATH.write_text("".join(lines), encoding="utf-8")
 
 
