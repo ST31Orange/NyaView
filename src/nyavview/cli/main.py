@@ -6,8 +6,7 @@ import typer
 from rich.console import Console
 
 from nyavview.core.settings import Settings
-from nyavview.engines import FfmpegTranscoder
-from nyavview.engines import YtDlpEngine
+from nyavview.core import service
 
 app = typer.Typer(help="NyaView video downloader and MP4 transcoder")
 console = Console()
@@ -29,7 +28,7 @@ def download(
     settings.cookie_file = cookie_file
     settings.cookies_from_browser = cookies_from_browser
     target = asyncio.run(
-        _download_url(settings, url, audio_only=audio_only, overwrite=overwrite)
+        service.download_url(settings, url, settings.download_dir, audio_only=audio_only, overwrite=overwrite)
     )
     console.print(f"[green]downloaded[/green] {target}")
 
@@ -45,33 +44,16 @@ def convert(
     target_dir = destination.expanduser().resolve()
     source_path = source.expanduser().resolve()
     if source_path.is_dir():
-        transcoder = FfmpegTranscoder(settings)
         outputs = asyncio.run(
-            transcoder.transcode_bilibili_cache(source_path, target_dir, overwrite=overwrite)
+            service.transcode_bilibili_cache(settings, source_path, target_dir, overwrite=overwrite)
         )
         for output in outputs:
             console.print(f"[green]converted[/green] {output}")
         return
     if not source_path.is_file():
         raise typer.BadParameter(f"source not a file or folder: {source_path}")
-    transcoder = FfmpegTranscoder(settings)
-    target = asyncio.run(transcoder.transcode(source_path, target_dir, overwrite=overwrite))
+    target = asyncio.run(service.transcode_local_file(settings, source_path, target_dir, overwrite=overwrite))
     console.print(f"[green]converted[/green] {target}")
-
-
-async def _download_url(
-    settings: Settings,
-    url: str,
-    *,
-    audio_only: bool,
-    overwrite: bool,
-) -> Path:
-    return await YtDlpEngine(settings).download(
-        url,
-        settings.download_dir,
-        audio_only=audio_only,
-        overwrite=overwrite,
-    )
 
 
 def run_app() -> None:
