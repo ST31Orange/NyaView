@@ -36,6 +36,25 @@ document.querySelectorAll(".sub-tab").forEach((tab) => {
   });
 });
 
+/* -------- support / donate modal -------- */
+
+function openSupportModal() {
+  $("supportModal").style.display = "flex";
+}
+
+function closeSupportModal() {
+  $("supportModal").style.display = "none";
+}
+
+$("supportBtn").addEventListener("click", openSupportModal);
+$("supportClose").addEventListener("click", closeSupportModal);
+$("supportModal").addEventListener("click", (e) => {
+  if (e.target === $("supportModal")) closeSupportModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("supportModal").style.display === "flex") closeSupportModal();
+});
+
 /* ---------------------------------------------------------- toast */
 
 let toastTimer = null;
@@ -219,7 +238,7 @@ async function refreshDirs() {
   $("dlDirPath").textContent = `当前：${info.downloadDir}`;
   $("cvDirPath").textContent = `当前：${info.convertedDir}`;
   $("biliDirPath").textContent = `当前：${info.convertedDir}`;
-  $("runtimeText").textContent = `ffmpeg ${info.ffmpeg.split(/[\\/]/).pop()} · yt-dlp ${info.ytdlp}`;
+  $("footerStats").textContent = `ffmpeg ${info.ffmpeg.split(/[\\/]/).pop()} · yt-dlp ${info.ytdlp}`;
 }
 
 /* ---------------------------------------------------------- actions */
@@ -587,7 +606,7 @@ if (!window.pywebview) {
   const probe = () => {
     if (window.pywebview) return; // bridge arrived — boot() will handle it
     if (++tries < 8) { setTimeout(probe, 250); return; }
-    $("runtimeText").textContent = "浏览器预览模式（无后端）";
+    $("footerStats").textContent = "浏览器预览模式（无后端）";
     log("warn", "未检测到 pywebview 桥接，功能不可用（浏览器预览模式）");
     renderQueue();
   };

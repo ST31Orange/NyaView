@@ -48,7 +48,7 @@ def main() -> int:
         "urlInput": ev("!!document.getElementById('downloadUrl')"),
         "api_poll": ev("typeof (window.pywebview && window.pywebview.api && window.pywebview.api.poll)"),
         "api_start_download": ev("typeof (window.pywebview && window.pywebview.api && window.pywebview.api.start_download)"),
-        "runtimeText": ev("(document.getElementById('runtimeText')||{}).textContent || null"),
+        "runtimeText": ev("(document.getElementById('footerStats')||{}).textContent || null"),
         "logText": ev("(document.getElementById('logView')||{}).textContent || '<none>'"),
     }
     for k, v in results.items():

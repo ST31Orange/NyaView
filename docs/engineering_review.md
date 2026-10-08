@@ -321,6 +321,7 @@ class ProcessTimeoutError(EngineError): ...
    - `preview()` 加 `prefer_h264` 参数：H.264 模式时**格式列表只显示 AVC 格式**（实测：h264=True → 30032/30016 avc1；h264=False → 30033/30011 hev1），预览下拉与下载模式一致，用户不会选到 HEVC/AV1；
    - JS 预览下拉编码标签修正（HEVC 显示"HEVC"、H.264 显示"H.264"、AV1 显示"AV1"，原来 HEVC 显示 HEV1、H.264 显示 AVC1 易混淆）；
    - 切换"画质"下拉会重新拉取预览格式列表。
+19. **右上角运行时信息移位 + 打赏弹窗（用户要求）**：右上角的"ffmpeg · yt-dlp 运行时徽章"改为**纯图标按钮**（绿点圆形，hover 高亮），点击弹出**打赏弹窗**（中英文文案 + 微信/支付宝收款码两张图片，图片从 `D:\AIHOME\CODEX\收款码.jpg`、`WX收款码.jpg` 复制到 `static/img/qr-alipay.jpg`、`qr-wechat.jpg` 随 EXE 打包）；运行时信息移到**右下角** `#footerStats`，与左下角 `#footerInfo` 同格式（`.footer` 统一 12px / 次要色）。弹窗支持 × 按钮、点遮罩、Esc 关闭。`cdp_check.py` 同步改为读 `#footerStats`。
 
 ---
 

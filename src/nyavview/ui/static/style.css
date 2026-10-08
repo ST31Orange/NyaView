@@ -104,19 +104,31 @@ body {
 .runtime-badge {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--card);
-  font-size: 12px;
-  color: var(--text-secondary);
   box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  padding: 0;
+}
+
+.runtime-badge:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-card);
+  transform: translateY(-1px);
+}
+
+.runtime-badge:active {
+  transform: translateY(0) scale(0.96);
 }
 
 .runtime-badge .dot {
-  width: 7px;
-  height: 7px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--success);
   box-shadow: 0 0 0 3px var(--success-soft);
@@ -782,6 +794,114 @@ body {
   font-size: 12px;
   color: var(--text-faint);
   border-top: 1px solid var(--border);
+}
+
+.footer-stats {
+  font-size: 12px;
+  color: var(--text-faint);
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* ============================ Support / donate modal ============================ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 18, 14, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fade-in 0.18s ease;
+}
+
+.modal {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.28);
+  padding: 30px 34px;
+  max-width: 520px;
+  width: calc(100% - 48px);
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.modal-close:hover {
+  color: var(--text);
+  background: var(--bg-soft);
+}
+
+.modal-title {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+.modal-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-align: center;
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.modal-text-en {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  font-style: italic;
+  margin-bottom: 18px;
+}
+
+.modal-qr {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.modal-qr figure {
+  margin: 0;
+  text-align: center;
+}
+
+.modal-qr img {
+  width: 180px;
+  height: 180px;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 6px;
+  display: block;
+}
+
+.modal-qr figcaption {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 /* ============================ Toast ============================ */

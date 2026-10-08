@@ -17,10 +17,9 @@
           <span class="brand-tagline">视频下载 · 格式转换</span>
         </div>
       </div>
-      <div class="runtime-badge" id="runtimeBadge" title="运行时信息">
+      <button id="supportBtn" class="runtime-badge" title="支持作者" aria-label="支持作者">
         <span class="dot"></span>
-        <span id="runtimeText">正在初始化…</span>
-      </div>
+      </button>
     </header>
 
     <!-- ============ Tabs ============ -->
@@ -315,8 +314,29 @@
 
     <footer class="footer">
       <span id="footerInfo">NyaView · 基于 yt-dlp 与 FFmpeg</span>
-      <span id="footerStats"></span>
+      <span id="footerStats" class="footer-stats">正在初始化…</span>
     </footer>
+  </div>
+
+  <!-- ============ Support / donate modal ============ -->
+  <div id="supportModal" class="modal-overlay" style="display:none">
+    <div class="modal" role="dialog" aria-modal="true">
+      <button id="supportClose" class="modal-close" aria-label="关闭">×</button>
+      <h2 class="modal-title">☕ 支持作者</h2>
+      <p class="modal-text">开发不易，感谢打赏和适配新版本。</p>
+      <p class="modal-text">如果这个插件对你有帮助，欢迎请作者喝杯咖啡。你的支持会用于后续维护、修 bug。</p>
+      <p class="modal-text modal-text-en">If this tool helps you, buying the author a coffee is much appreciated — it goes toward maintenance, bug fixes and keeping up with new versions.</p>
+      <div class="modal-qr">
+        <figure>
+          <img src="img/qr-wechat.jpg" alt="微信收款码" />
+          <figcaption>微信</figcaption>
+        </figure>
+        <figure>
+          <img src="img/qr-alipay.jpg" alt="收款码" />
+          <figcaption>支付宝</figcaption>
+        </figure>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast"></div>
