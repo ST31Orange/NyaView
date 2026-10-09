@@ -332,6 +332,11 @@ class ProcessTimeoutError(EngineError): ...
    - **Cookie 缓存**：右上角新增 **🍪 加载 Cookie 按钮**，点击调 `Api.load_cookies()` → `yt_dlp.cookies.extract_cookies_from_browser()` 读浏览器 cookie → `YoutubeDLCookieJar.save()` 写 **Netscape 格式缓存文件**（`~/.nyavview_cookies.txt`，`ignore_discard/ignore_expires`）→ 更新设置（`cookie_file=缓存路径`、清空 `cookies_from_browser`）并持久化 toml。之后 `_opts` 的 **cookie 优先级改为缓存文件优先**（不再依赖浏览器开关/锁库）。失败（浏览器开着锁库 #7271）返回错误 + "请关闭浏览器后重试"提示。
    - **打赏页反馈文案**：二维码下方新增反馈段落（含 `nyaspace@163.com` mailto 链接）："如果您在使用过程中遇到任何问题…欢迎发送邮件至 nyaspace@163.com…感谢您的支持与反馈！"。
    - 实测：mock 提取成功路径 count=2、缓存文件含 SESSDATA、设置更新正确；UI 按钮/文案/mailto 链接均在。53 测试全绿。
+23. **Cookie 加载失败 #7271 → 深挖出 Chromium v20 App-Bound 加密（用户报告）**：点 🍪 报 "Could not copy Chrome cookie database"（#7271）。逐层诊断：
+   - Profile 1 的 Cookies 数据库被 Edge 占用（shutil.copy PermissionError → #7271）；Default 的数据库能读，但报 **#10927 "Failed to decrypt with DPAPI"**；
+   - 直读 Default 数据库发现 **全部 74 个 cookie 的加密前缀都是 `763230` = "v20"**——新版 Chromium **App-Bound Encryption**，key 绑定浏览器进程签名，**普通进程（即使同一用户）按设计无法解密**（防恶意软件窃取 cookie）；Local State 里也出现 `app_bound_encrypted_key`。安装的 yt-dlp 2026.08.19 的 Windows 解密器只支持 v10/v11，不支持 v20。
+   - **结论**：对使用新版 Edge 的用户，程序**无法直接从浏览器读取 cookie**（开不开浏览器都一样）——这是 Chromium 的架构性限制，不是可修的 bug。
+   - **修复**：`load_cookies` 改为**遍历所有 profile、逐个提取并合并成功的**（锁定 profile 不再拖垮整体）；全部失败时**区分两种错误**——检测到 "decrypt/dpapi" 错误 → 返回明确的 App-Bound 指引（用浏览器插件如「Get cookies.txt LOCALLY」导出 cookies.txt 填到设置页）；否则 → "关闭浏览器重试"。设置页 Cookie 文件字段加"选择文件…"按钮闭环引导。实测真实 Edge 返回 v20 指引文案；53 测试全绿。
 
 ---
 

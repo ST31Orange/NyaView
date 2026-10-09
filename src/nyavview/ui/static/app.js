@@ -64,11 +64,13 @@ $("cookieBtn").addEventListener("click", () => {
   api().load_cookies().then((res) => {
     btn.disabled = false;
     if (res.ok) {
-      toast(`已加载 ${res.count} 个 Cookie，已缓存（之后自动使用）`, "success");
-      log("info", `Cookie 已从 ${res.browser} 导出 ${res.count} 个 → ${res.path}`);
+      const skipNote = res.skipped ? `（跳过 ${res.skipped} 个被占用的配置）` : "";
+      toast(`已加载 ${res.count} 个 Cookie，已缓存${skipNote}`, "success");
+      log("info", `Cookie 已从 ${res.browser} 导出 ${res.count} 个${skipNote} → ${res.path}`);
     } else {
-      toast("Cookie 加载失败：" + (res.error || "未知错误"), "error");
-      log("error", `Cookie 加载失败：${res.error} ${res.hint || ""}`);
+      const full = `${res.error || ""} ${res.detail || ""} ${res.hint || ""}`.trim();
+      toast(full, "error", 9000);
+      log("error", `Cookie 加载失败：${full}`);
     }
   }).catch((err) => {
     btn.disabled = false;
@@ -79,12 +81,12 @@ $("cookieBtn").addEventListener("click", () => {
 /* ---------------------------------------------------------- toast */
 
 let toastTimer = null;
-function toast(message, kind = "info") {
+function toast(message, kind = "info", durationMs = 3600) {
   const el = $("toast");
   el.textContent = message;
   el.className = `toast show ${kind}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 3600);
+  toastTimer = setTimeout(() => el.classList.remove("show"), durationMs);
 }
 
 /* ---------------------------------------------------------- log */
@@ -518,6 +520,15 @@ $("clearLog").addEventListener("click", () => {
 });
 
 /* -------- settings -------- */
+
+$("setCookieFilePick").addEventListener("click", () => {
+  api().pick_file("选择 Cookie 文件（cookies.txt）").then((path) => {
+    if (path) {
+      $("setCookieFile").value = path;
+      toast("已选择 Cookie 文件，记得点「保存设置」", "info");
+    }
+  });
+});
 
 $("settingsSave").addEventListener("click", () => {
   const payload = {

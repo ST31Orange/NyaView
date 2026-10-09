@@ -134,36 +134,120 @@ class Api:
 
     COOKIE_CACHE_PATH = Path.home() / ".nyavview_cookies.txt"
 
+    @staticmethod
+    def _running_browser_processes(browser: str) -> int:
+        """Count running processes for a browser (0 if none detected)."""
+        names = {
+            "edge": "msedge.exe",
+            "chrome": "chrome.exe",
+            "firefox": "firefox.exe",
+        }
+        exe = names.get(browser.lower(), "msedge.exe")
+        try:
+            import subprocess
+
+            out = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {exe}", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            return sum(1 for line in out.stdout.splitlines() if exe.lower() in line.lower())
+        except Exception:
+            return -1  # unknown
+
     def load_cookies(self, browser: str = "") -> dict[str, Any]:
         """Export cookies from a browser into a persistent cache file.
 
-        Once exported, ``_opts`` prefers the cached cookie file, so the
-        download no longer depends on the browser's open/closed state (or its
-        locked cookie DB). The file is only a fallback if it still works;
-        re-click the button to refresh when it expires.
+        Iterates every browser profile and merges whatever extracts
+        successfully — a locked profile (browser running) no longer fails the
+        whole export, so e.g. Edge's Default profile cookies are still saved
+        even if Profile 1 is in use. Once exported, ``_opts`` prefers the
+        cached cookie file.
         """
-        try:
-            from yt_dlp.cookies import extract_cookies_from_browser
+        import os
+        from pathlib import Path as _Path
 
-            browser = (browser or self._manager.settings.cookies_from_browser or "edge").strip()
-            jar = extract_cookies_from_browser(browser)
-            path = self.COOKIE_CACHE_PATH
-            path.parent.mkdir(parents=True, exist_ok=True)
-            jar.save(str(path), ignore_discard=True, ignore_expires=True)
-            # Switch settings to the cache file so it is used from now on.
-            settings = load_user_settings()
-            settings.cookie_file = path
-            settings.cookies_from_browser = None
-            save_user_settings(settings)
-            self._manager.settings = settings
-            count = len(list(jar))
-            return {"ok": True, "path": str(path), "count": count, "browser": browser}
-        except Exception as exc:
+        from yt_dlp.cookies import (
+            YoutubeDLCookieJar,
+            extract_cookies_from_browser,
+            _get_chromium_based_browser_settings,
+            CHROMIUM_BASED_BROWSERS,
+        )
+
+        browser = (browser or self._manager.settings.cookies_from_browser or "edge").strip()
+        jar = YoutubeDLCookieJar()
+        errors: list[str] = []
+        profile_names: list[str | None] = [None]  # None -> yt-dlp picks newest
+
+        if browser.lower() in CHROMIUM_BASED_BROWSERS:
+            try:
+                browser_dir = _Path(_get_chromium_based_browser_settings(browser)["browser_dir"])
+                # One profile dir per folder holding a Cookies DB directly or
+                # under Network/. Explicit list so a locked profile is skipped.
+                if browser_dir.is_dir():
+                    names = [
+                        d.name
+                        for d in browser_dir.iterdir()
+                        if d.is_dir()
+                        and (
+                            (d / "Cookies").is_file()
+                            or (d / "Network" / "Cookies").is_file()
+                        )
+                    ]
+                    if names:
+                        profile_names = sorted(names)
+            except Exception:
+                pass
+
+        for prof in profile_names:
+            try:
+                sub = extract_cookies_from_browser(browser, profile=prof)
+                for c in sub:
+                    jar.set_cookie(c)
+            except Exception as exc:  # locked / undecryptable profile — try next
+                errors.append(f"{prof or 'default'}: {type(exc).__name__}: {exc}")
+
+        if len(list(jar)) == 0:
+            # Distinguish the two failure modes so the user gets actionable help.
+            joined = " | ".join(errors).lower()
+            if "decrypt" in joined or "dpapi" in joined:
+                # Newer Chromium (Edge/Chrome 128+) encrypts cookies with
+                # App-Bound Encryption (v20), which ordinary processes cannot
+                # decrypt by design. No amount of closing the browser helps.
+                return {
+                    "ok": False,
+                    "error": "当前浏览器的 Cookie 使用了新版 App-Bound 加密，程序无法直接读取。",
+                    "detail": "这是浏览器的新安全机制（v20），不是程序问题。",
+                    "hint": "请用浏览器插件（如「Get cookies.txt LOCALLY」）导出 cookies.txt，然后在「设置」页的「Cookie 文件」中填写该文件路径。",
+                }
+            n_running = self._running_browser_processes(browser)
+            detail = f"检测到 {n_running} 个 {browser} 进程正在运行。" if n_running > 0 else ""
             return {
                 "ok": False,
-                "error": str(exc),
-                "hint": "如果浏览器正在运行，请先完全关闭浏览器后再试。",
+                "error": "未能从浏览器读取任何 Cookie。",
+                "detail": detail,
+                "hint": "请先彻底关闭浏览器（包括托盘/后台进程），或在设置页填写浏览器插件导出的 cookies.txt。",
             }
+
+        path = self.COOKIE_CACHE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        jar.save(str(path), ignore_discard=True, ignore_expires=True)
+        # Switch settings to the cache file so it is used from now on.
+        settings = load_user_settings()
+        settings.cookie_file = path
+        settings.cookies_from_browser = None
+        save_user_settings(settings)
+        self._manager.settings = settings
+        count = len(list(jar))
+        return {
+            "ok": True,
+            "path": str(path),
+            "count": count,
+            "browser": browser,
+            "profiles": len(profile_names),
+            "skipped": len(errors),
+        }
 
     # ----------------------------------------------------------- dialogs
 
