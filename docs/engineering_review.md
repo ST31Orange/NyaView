@@ -327,6 +327,7 @@ class ProcessTimeoutError(EngineError): ...
    - `_locate_output` 的音频 safety net 改为匹配任意非临时文件（输出扩展名随格式变化：m4a/mp3/aac/flac/wav/opus/webm…）；
    - UI：仅音频开关打开时**显示音频格式下拉、隐藏画质**（画质对音频无意义），关闭时恢复；`collectDownload` 传 `audioFormat`（仅音频时强制 `format=null` 不混入视频格式）。
    - 实测：auto→.m4a(1.6MB 原生)、mp3→.mp3(1.5MB)、aac→.m4a、flac→.flac(21MB 无损)。52 测试全绿。
+21. **预览缩略图加载失败（用户报告）**：粘贴链接后预览卡的封面一直加载失败。**根因**：yt-dlp 返回的缩略图 URL 是 `http://`（如 `http://i0.hdslb.com/...`），WebView2 前端加载远程 http 图片失败。Python 实测能正常下载（174KB JPEG）。**修复**：`preview()` 用 `_thumbnail_data_uri()` 在**后端下载缩略图并转成 base64 data URI**（urllib 带 UA/Referer 下载，3MB 上限，失败回退原始 URL 不阻塞预览），前端 `thumb.src` 直接显示 data URI，彻底绕开 WebView2 远程 http 图片限制。实测：preview 返回 `data:image/jpeg;base64,...`，UI 中图片 naturalWidth=1235 加载成功。52 测试全绿。
 
 ---
 

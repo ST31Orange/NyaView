@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -34,6 +35,40 @@ def _human_bytes(value: Optional[float]) -> Optional[str]:
             return f"{value:.1f}{unit}"
         value /= 1024
     return f"{value:.1f}PiB"
+
+
+_THUMBNAIL_MAX_BYTES = 3 * 1024 * 1024  # 3 MB cap on the preview thumbnail
+
+
+def _thumbnail_data_uri(url: str, timeout: float = 12.0) -> str:
+    """Download a thumbnail and return it as a base64 data URI.
+
+    The WebView2 frontend fails to load remote (often http://) thumbnails, so
+    the Python side fetches the image and inlines it. Falls back to the raw
+    URL (or empty) on any failure so a broken thumbnail never blocks preview.
+    """
+    import base64
+
+    if not url:
+        return ""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://www.bilibili.com/",
+                "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read(_THUMBNAIL_MAX_BYTES + 1)
+        if len(data) > _THUMBNAIL_MAX_BYTES:
+            return url  # too big — let the browser try the raw URL
+        content_type = (resp.headers.get("Content-Type") or "image/jpeg").split(";")[0]
+        b64 = base64.b64encode(data).decode("ascii")
+        return f"data:{content_type};base64,{b64}"
+    except Exception:
+        return url  # fall back to the raw URL rather than failing preview
 
 
 class YtDlpEngine:
@@ -387,7 +422,7 @@ class YtDlpEngine:
                 "title": info.get("title"),
                 "uploader": info.get("uploader") or info.get("channel"),
                 "duration": info.get("duration"),
-                "thumbnail": info.get("thumbnail"),
+                "thumbnail": _thumbnail_data_uri(info.get("thumbnail") or ""),
                 "playlistCount": len(entries),
                 "formats": list(by_height.values()),
             }
