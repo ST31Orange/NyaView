@@ -148,10 +148,13 @@ class YtDlpEngine:
             opts["subtitleslangs"] = ["zh-Hans", "zh-CN", "zh", "en"]
             opts["embedsubtitles"] = False
             opts["skip_removing_subtitles"] = False
-        if self.settings.cookies_from_browser:
-            opts["cookiesfrombrowser"] = (self.settings.cookies_from_browser,)
-        elif self.settings.cookie_file:
+        # Cookie precedence: a cached cookie FILE wins once it has been
+        # exported (browser-agnostic, no lock issues), else read from the
+        # browser (requires the browser to be closed).
+        if self.settings.cookie_file:
             opts["cookiefile"] = str(self.settings.cookie_file.expanduser())
+        elif self.settings.cookies_from_browser:
+            opts["cookiesfrombrowser"] = (self.settings.cookies_from_browser,)
         if audio_only:
             opts["format"] = "bestaudio/best"
             # Audio export format (仅音频). 'auto' keeps the source's native

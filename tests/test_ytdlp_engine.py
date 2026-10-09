@@ -147,10 +147,19 @@ def test_run_falls_back_when_cookie_db_locked(monkeypatch) -> None:
 
 
 def test_opts_cookie_precedence(tmp_path: Path) -> None:
+    """The cached cookie FILE wins over the browser once exported — downloads
+    no longer depend on the browser's open/closed state."""
     engine = YtDlpEngine(Settings(cookies_from_browser="edge", cookie_file=tmp_path / "c.txt"))
     opts = engine._opts(Path("d"), audio_only=False, overwrite=False)
+    assert opts["cookiefile"] == str((tmp_path / "c.txt").expanduser())
+    assert "cookiesfrombrowser" not in opts
+
+
+def test_opts_cookie_browser_fallback(tmp_path: Path) -> None:
+    """Without a cookie file, the browser is used."""
+    engine = YtDlpEngine(Settings(cookies_from_browser="edge"))
+    opts = engine._opts(Path("d"), audio_only=False, overwrite=False)
     assert opts["cookiesfrombrowser"] == ("edge",)
-    assert "cookiefile" not in opts
 
 
 def test_opts_cookie_file(tmp_path: Path) -> None:

@@ -55,6 +55,27 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && $("supportModal").style.display === "flex") closeSupportModal();
 });
 
+/* -------- load & cache cookies -------- */
+
+$("cookieBtn").addEventListener("click", () => {
+  const btn = $("cookieBtn");
+  btn.disabled = true;
+  toast("正在加载 Cookie…", "info");
+  api().load_cookies().then((res) => {
+    btn.disabled = false;
+    if (res.ok) {
+      toast(`已加载 ${res.count} 个 Cookie，已缓存（之后自动使用）`, "success");
+      log("info", `Cookie 已从 ${res.browser} 导出 ${res.count} 个 → ${res.path}`);
+    } else {
+      toast("Cookie 加载失败：" + (res.error || "未知错误"), "error");
+      log("error", `Cookie 加载失败：${res.error} ${res.hint || ""}`);
+    }
+  }).catch((err) => {
+    btn.disabled = false;
+    toast("Cookie 加载失败", "error");
+  });
+});
+
 /* ---------------------------------------------------------- toast */
 
 let toastTimer = null;

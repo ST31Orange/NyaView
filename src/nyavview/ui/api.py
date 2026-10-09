@@ -130,6 +130,41 @@ class Api:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    # ----------------------------------------------------------- cookies
+
+    COOKIE_CACHE_PATH = Path.home() / ".nyavview_cookies.txt"
+
+    def load_cookies(self, browser: str = "") -> dict[str, Any]:
+        """Export cookies from a browser into a persistent cache file.
+
+        Once exported, ``_opts`` prefers the cached cookie file, so the
+        download no longer depends on the browser's open/closed state (or its
+        locked cookie DB). The file is only a fallback if it still works;
+        re-click the button to refresh when it expires.
+        """
+        try:
+            from yt_dlp.cookies import extract_cookies_from_browser
+
+            browser = (browser or self._manager.settings.cookies_from_browser or "edge").strip()
+            jar = extract_cookies_from_browser(browser)
+            path = self.COOKIE_CACHE_PATH
+            path.parent.mkdir(parents=True, exist_ok=True)
+            jar.save(str(path), ignore_discard=True, ignore_expires=True)
+            # Switch settings to the cache file so it is used from now on.
+            settings = load_user_settings()
+            settings.cookie_file = path
+            settings.cookies_from_browser = None
+            save_user_settings(settings)
+            self._manager.settings = settings
+            count = len(list(jar))
+            return {"ok": True, "path": str(path), "count": count, "browser": browser}
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "hint": "如果浏览器正在运行，请先完全关闭浏览器后再试。",
+            }
+
     # ----------------------------------------------------------- dialogs
 
     def pick_file(self, title: str = "选择文件") -> Optional[str]:

@@ -328,6 +328,10 @@ class ProcessTimeoutError(EngineError): ...
    - UI：仅音频开关打开时**显示音频格式下拉、隐藏画质**（画质对音频无意义），关闭时恢复；`collectDownload` 传 `audioFormat`（仅音频时强制 `format=null` 不混入视频格式）。
    - 实测：auto→.m4a(1.6MB 原生)、mp3→.mp3(1.5MB)、aac→.m4a、flac→.flac(21MB 无损)。52 测试全绿。
 21. **预览缩略图加载失败（用户报告）**：粘贴链接后预览卡的封面一直加载失败。**根因**：yt-dlp 返回的缩略图 URL 是 `http://`（如 `http://i0.hdslb.com/...`），WebView2 前端加载远程 http 图片失败。Python 实测能正常下载（174KB JPEG）。**修复**：`preview()` 用 `_thumbnail_data_uri()` 在**后端下载缩略图并转成 base64 data URI**（urllib 带 UA/Referer 下载，3MB 上限，失败回退原始 URL 不阻塞预览），前端 `thumb.src` 直接显示 data URI，彻底绕开 WebView2 远程 http 图片限制。实测：preview 返回 `data:image/jpeg;base64,...`，UI 中图片 naturalWidth=1235 加载成功。52 测试全绿。
+22. **Cookie 缓存复用 + 加载按钮 + 打赏页反馈（用户要求）**：
+   - **Cookie 缓存**：右上角新增 **🍪 加载 Cookie 按钮**，点击调 `Api.load_cookies()` → `yt_dlp.cookies.extract_cookies_from_browser()` 读浏览器 cookie → `YoutubeDLCookieJar.save()` 写 **Netscape 格式缓存文件**（`~/.nyavview_cookies.txt`，`ignore_discard/ignore_expires`）→ 更新设置（`cookie_file=缓存路径`、清空 `cookies_from_browser`）并持久化 toml。之后 `_opts` 的 **cookie 优先级改为缓存文件优先**（不再依赖浏览器开关/锁库）。失败（浏览器开着锁库 #7271）返回错误 + "请关闭浏览器后重试"提示。
+   - **打赏页反馈文案**：二维码下方新增反馈段落（含 `nyaspace@163.com` mailto 链接）："如果您在使用过程中遇到任何问题…欢迎发送邮件至 nyaspace@163.com…感谢您的支持与反馈！"。
+   - 实测：mock 提取成功路径 count=2、缓存文件含 SESSDATA、设置更新正确；UI 按钮/文案/mailto 链接均在。53 测试全绿。
 
 ---
 
