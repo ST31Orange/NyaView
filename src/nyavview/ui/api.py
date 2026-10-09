@@ -307,16 +307,32 @@ class Api:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    def ebook_thumbnails(self, paths: list[str], size: int = 150) -> dict[str, Any]:
+    def ebook_thumbnails(self, paths: list[str], size: int = 300) -> dict[str, Any]:
         """Inline thumbnails for the reorder UI (local paths cannot be shown
         directly by the webview)."""
         from nyavview.engines.ebook import EbookBuilder
 
         try:
             builder = EbookBuilder(self._manager.settings)
-            size = max(48, min(int(size or 150), 320))
+            size = max(64, min(int(size or 300), 640))
             thumbs = builder.thumbnails([Path(p) for p in (paths or [])], size=size)
             return {"ok": True, "thumbs": thumbs}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def ebook_preview(self, path: str, max_size: int = 1800) -> dict[str, Any]:
+        """One large image for the double-click lightbox."""
+        from nyavview.engines.ebook import EbookBuilder
+
+        path = (path or "").strip()
+        if not path:
+            return {"ok": False, "error": "没有指定图片"}
+        try:
+            builder = EbookBuilder(self._manager.settings)
+            size = max(400, min(int(max_size or 1800), 4000))
+            info = builder.preview_data_uri(Path(path), max_size=size)
+            info["ok"] = True
+            return info
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 

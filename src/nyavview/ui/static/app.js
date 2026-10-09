@@ -328,6 +328,9 @@ $("biliPickFolder").addEventListener("click", () => {
 /* -------- image pack -> ebook -------- */
 
 const EBOOK_THUMB_BATCH = 24;
+const EBOOK_THUMB_SIZE = 300; // rendered ~150px wide, so 300 keeps it crisp
+let dragFrom = null; // { group, index } while a thumbnail is being dragged
+let imgModalAt = null; // { group, index } currently shown in the lightbox
 
 function ebookFlatImages() {
   return state.ebookGroups.flatMap((g) => g.images);
@@ -413,33 +416,81 @@ function renderEbookList() {
       });
     });
     el.addEventListener("dragstart", (e) => {
+      dragFrom = { group: gi, index: ii };
       e.dataTransfer.effectAllowed = "move";
+      // Chromium requires some data to be set for the drag to be accepted.
       e.dataTransfer.setData("text/plain", `${gi}:${ii}`);
       el.classList.add("dragging");
     });
     el.addEventListener("dragend", () => {
-      el.classList.remove("dragging");
-      host.querySelectorAll(".ebook-item").forEach((n) =>
-        n.classList.remove("drop-before", "drop-after"));
+      dragFrom = null;
+      clearDropMarks();
+      host.querySelectorAll(".ebook-item").forEach((n) => n.classList.remove("dragging"));
     });
-    el.addEventListener("dragover", (e) => {
+    // Double-click opens the large single-image view.
+    el.addEventListener("dblclick", (e) => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
+      openImageModal(gi, ii);
     });
-    el.addEventListener("dragenter", () => {
-      host.querySelectorAll(".ebook-item").forEach((n) =>
-        n.classList.remove("drop-before", "drop-after"));
-      el.classList.add("drop-before");
-    });
-    el.addEventListener("drop", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const [fromGroup, fromIndex] = (e.dataTransfer.getData("text/plain") || "").split(":").map(Number);
-      const toGroup = Number(el.dataset.group);
-      const toIndex = Number(el.dataset.index);
-      if (Number.isNaN(fromGroup) || fromGroup !== toGroup || fromIndex === toIndex) return;
-      reorderEbook(fromGroup, fromIndex, toIndex);
-    });
+  });
+}
+
+function clearDropMarks() {
+  $("ebookList")
+    .querySelectorAll(".ebook-item")
+    .forEach((n) => n.classList.remove("drop-before", "drop-after"));
+}
+
+/** Nearest thumbnail to the pointer, so drops in gaps/empty space still land. */
+function ebookDropTarget(x, y) {
+  const items = Array.from($("ebookList").querySelectorAll(".ebook-item"));
+  let best = null;
+  let bestDist = Infinity;
+  items.forEach((el) => {
+    const r = el.getBoundingClientRect();
+    const dx = x - (r.left + r.width / 2);
+    const dy = y - (r.top + r.height / 2);
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) {
+      bestDist = d;
+      best = { el, rect: r };
+    }
+  });
+  if (!best) return null;
+  const after = x > best.rect.left + best.rect.width / 2;
+  return {
+    el: best.el,
+    group: Number(best.el.dataset.group),
+    index: Number(best.el.dataset.index),
+    after,
+  };
+}
+
+function bindEbookDropZone() {
+  const host = $("ebookList");
+  // Container-level handlers make dragging forgiving: a drop anywhere in the
+  // list (including the gaps between thumbnails or the empty space after the
+  // last one) resolves to the closest thumbnail.
+  host.addEventListener("dragover", (e) => {
+    if (!dragFrom) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const t = ebookDropTarget(e.clientX, e.clientY);
+    clearDropMarks();
+    if (t && t.group === dragFrom.group) t.el.classList.add(t.after ? "drop-after" : "drop-before");
+  });
+  host.addEventListener("drop", (e) => {
+    if (!dragFrom) return;
+    e.preventDefault();
+    const t = ebookDropTarget(e.clientX, e.clientY);
+    const from = dragFrom;
+    dragFrom = null;
+    clearDropMarks();
+    if (!t || t.group !== from.group) return;
+    let to = t.index;
+    if (t.after && to < state.ebookGroups[from.group].images.length - 1) to += 1;
+    if (to === from.index) return;
+    reorderEbook(from.group, from.index, to);
   });
 }
 
@@ -463,7 +514,7 @@ function loadEbookThumbs() {
     .filter((p) => !state.ebookThumbs.has(p));
   if (!pending.length) return;
   const batch = pending.slice(0, EBOOK_THUMB_BATCH);
-  api().ebook_thumbnails(batch, 150).then((res) => {
+  api().ebook_thumbnails(batch, EBOOK_THUMB_SIZE).then((res) => {
     if (!res || !res.ok) return;
     (res.thumbs || []).forEach((t) => {
       if (t.data) state.ebookThumbs.set(t.path, t.data);
@@ -477,6 +528,68 @@ $("ebookPickFolder").addEventListener("click", () => {
   api().pick_folder().then((path) => {
     if (path) ebookSetFolder(path);
   });
+});
+
+/* -------- large single-image view (double-click a thumbnail) -------- */
+
+function openImageModal(groupIndex, index) {
+  const group = state.ebookGroups[groupIndex];
+  if (!group || !group.images[index]) return;
+  imgModalAt = { group: groupIndex, index };
+  $("imgModal").style.display = "flex";
+  loadImageModal();
+}
+
+function closeImageModal() {
+  $("imgModal").style.display = "none";
+  imgModalAt = null;
+  $("imgModalImg").removeAttribute("src");
+}
+
+function loadImageModal() {
+  if (!imgModalAt) return;
+  const { group, index } = imgModalAt;
+  const image = state.ebookGroups[group] && state.ebookGroups[group].images[index];
+  if (!image) return;
+  $("imgModalTitle").textContent = `${index + 1} / ${state.ebookGroups[group].images.length} · ${image.name}`;
+  $("imgModalMeta").textContent = image.width
+    ? `${image.width}×${image.height}`
+    : "";
+  $("imgModalLoading").style.display = "block";
+  $("imgModalImg").removeAttribute("src");
+  api().ebook_preview(image.path, 1800).then((res) => {
+    if (!imgModalAt || imgModalAt.group !== group || imgModalAt.index !== index) return;
+    $("imgModalLoading").style.display = "none";
+    if (res && res.ok) {
+      $("imgModalImg").src = res.data;
+      $("imgModalMeta").textContent =
+        `${res.width}×${res.height}` + (res.shownWidth < res.width ? `（预览 ${res.shownWidth}×${res.shownHeight}）` : "");
+    } else {
+      toast((res && res.error) || "无法加载图片", "error");
+    }
+  });
+}
+
+function stepImageModal(delta) {
+  if (!imgModalAt) return;
+  const images = state.ebookGroups[imgModalAt.group].images;
+  const next = imgModalAt.index + delta;
+  if (next < 0 || next >= images.length) return;
+  imgModalAt.index = next;
+  loadImageModal();
+}
+
+$("imgModalClose").addEventListener("click", closeImageModal);
+$("imgModalPrev").addEventListener("click", () => stepImageModal(-1));
+$("imgModalNext").addEventListener("click", () => stepImageModal(1));
+$("imgModal").addEventListener("click", (e) => {
+  if (e.target === $("imgModal") || e.target.classList.contains("lightbox-body")) closeImageModal();
+});
+document.addEventListener("keydown", (e) => {
+  if ($("imgModal").style.display !== "flex") return;
+  if (e.key === "Escape") closeImageModal();
+  else if (e.key === "ArrowLeft") stepImageModal(-1);
+  else if (e.key === "ArrowRight") stepImageModal(1);
 });
 
 $("ebookRescan").addEventListener("click", () => {
@@ -825,6 +938,7 @@ function setupDropZone(zoneId) {
 setupDropZone("cvDropZone");
 setupDropZone("biliDropZone");
 setupDropZone("ebookDropZone");
+bindEbookDropZone(); // in-page thumbnail reordering (container-level drop)
 
 /* -------- update check (J) -------- */
 

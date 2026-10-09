@@ -507,12 +507,44 @@ class EbookBuilder:
                     if im.mode not in ("RGB", "L"):
                         im = im.convert("RGB")
                     buf = io.BytesIO()
-                    im.save(buf, format="JPEG", quality=80, optimize=True)
+                    im.save(buf, format="JPEG", quality=82, optimize=True)
                 entry["data"] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
             except Exception as exc:  # keep the row even if the thumb fails
                 entry["error"] = str(exc)
             out.append(entry)
         return out
+
+    def preview_data_uri(
+        self, path: Path, *, max_size: int = 1800, quality: int = 88
+    ) -> dict[str, Any]:
+        """A large, single-image preview (for the double-click lightbox).
+
+        Capped at ``max_size`` on the long edge so a full-resolution comic page
+        (often 2-6 MB) still transfers quickly while remaining readable.
+        """
+        from PIL import Image, ImageOps
+
+        path = Path(path)
+        if not path.is_file():
+            raise TranscodeError(f"图片不存在：{path}")
+        with Image.open(path) as im:
+            original = im.size
+            im = ImageOps.exif_transpose(im) or im
+            im.thumbnail((max_size, max_size))
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            shown = im.size
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=quality, optimize=True)
+        return {
+            "path": str(path),
+            "name": path.name,
+            "data": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii"),
+            "width": original[0],
+            "height": original[1],
+            "shownWidth": shown[0],
+            "shownHeight": shown[1],
+        }
 
     # ------------------------------------------------------------------ build
 

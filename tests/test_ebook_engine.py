@@ -298,6 +298,26 @@ def test_builder_thumbnail_survives_broken_file(tmp_path: Path) -> None:
     assert "error" in thumbs[0]
 
 
+def test_preview_data_uri_downscales_and_reports_original(tmp_path: Path) -> None:
+    """The lightbox image is capped but still reports the original size."""
+    src = tmp_path / "big.jpg"
+    _make_image(src, size=(2400, 3600))
+    info = _engine().preview_data_uri(src, max_size=1200)
+    assert info["data"].startswith("data:image/jpeg;base64,")
+    assert (info["width"], info["height"]) == (2400, 3600)
+    assert max(info["shownWidth"], info["shownHeight"]) <= 1200
+    # A small image is not upscaled.
+    small = tmp_path / "small.jpg"
+    _make_image(small, size=(320, 480))
+    got = _engine().preview_data_uri(small, max_size=1200)
+    assert (got["shownWidth"], got["shownHeight"]) == (320, 480)
+
+
+def test_preview_data_uri_rejects_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(TranscodeError):
+        _engine().preview_data_uri(tmp_path / "nope.jpg")
+
+
 @pytest.mark.asyncio
 async def test_builder_tolerates_wrapped_or_dict_page_entries(pack: Path, tmp_path: Path) -> None:
     """A single-element list or ``{"path": ...}`` entry must still work (the
