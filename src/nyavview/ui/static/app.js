@@ -515,10 +515,11 @@ function endEbookDrag(e) {
   if (!st.active) return; // it was a click, not a drag
   const t = ebookDropTarget(e.clientX, e.clientY);
   if (!t || t.group !== st.group) return;
-  const count = state.ebookGroups[st.group].images.length;
-  let to = t.index;
-  if (t.after && to < count - 1) to += 1;
-  if (to !== st.index) reorderEbook(st.group, st.index, to);
+  // Insertion point in the pre-move list: before the target, or after it.
+  const insertAt = t.index + (t.after ? 1 : 0);
+  // Dropping onto its own slot (or right after itself) changes nothing.
+  if (insertAt === st.index || insertAt === st.index + 1) return;
+  reorderEbookTo(st.group, st.index, insertAt);
 }
 
 /** Keep the list scrolling when dragging near its top/bottom edge. */
@@ -538,13 +539,25 @@ function moveEbookImage(groupIndex, index, delta) {
   const images = state.ebookGroups[groupIndex].images;
   const target = index + delta;
   if (target < 0 || target >= images.length) return;
-  reorderEbook(groupIndex, index, target);
+  // Adjacent move: a plain swap is exactly "shift by one".
+  [images[index], images[target]] = [images[target], images[index]];
+  renderEbookList();
 }
 
-function reorderEbook(groupIndex, from, to) {
+/**
+ * Move one page to an insertion point.
+ *
+ * ``insertAt`` is a position in the list *before* the move (0..length), which
+ * is what the drop indicator shows. Removing the page first shifts every later
+ * index left by one, so the insertion index must be decremented when moving
+ * forwards — otherwise the page lands one slot too far right.
+ */
+function reorderEbookTo(groupIndex, from, insertAt) {
   const images = state.ebookGroups[groupIndex].images;
+  const clamped = Math.max(0, Math.min(insertAt, images.length));
   const [moved] = images.splice(from, 1);
-  images.splice(to, 0, moved);
+  const finalAt = clamped > from ? clamped - 1 : clamped;
+  images.splice(Math.max(0, Math.min(finalAt, images.length)), 0, moved);
   renderEbookList();
 }
 
