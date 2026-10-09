@@ -290,6 +290,45 @@ class Api:
     def pick_output_dir(self, title: str = "选择输出目录") -> Optional[str]:
         return self.pick_folder(title)
 
+    # -------------------------------------------------------------- ebook
+
+    def scan_images(self, folder: str, mode: str = "merge") -> dict[str, Any]:
+        """List an image pack in detected page order (for the ebook tab)."""
+        from nyavview.engines.ebook import EbookBuilder
+
+        folder = (folder or "").strip()
+        if not folder:
+            return {"ok": False, "error": "请先选择图片文件夹"}
+        try:
+            builder = EbookBuilder(self._manager.settings)
+            info = builder.scan(Path(folder), mode="per_folder" if mode == "per_folder" else "merge")
+            info["ok"] = True
+            return info
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def ebook_thumbnails(self, paths: list[str], size: int = 150) -> dict[str, Any]:
+        """Inline thumbnails for the reorder UI (local paths cannot be shown
+        directly by the webview)."""
+        from nyavview.engines.ebook import EbookBuilder
+
+        try:
+            builder = EbookBuilder(self._manager.settings)
+            size = max(48, min(int(size or 150), 320))
+            thumbs = builder.thumbnails([Path(p) for p in (paths or [])], size=size)
+            return {"ok": True, "thumbs": thumbs}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def start_ebook(self, source: str, options: dict[str, Any]) -> dict[str, Any]:
+        if not source:
+            return {"ok": False, "error": "请先选择图片文件夹"}
+        try:
+            job_id = self._manager.submit_ebook(source, options or {})
+            return {"ok": True, "jobId": job_id}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     # -------------------------------------------------------------- jobs
 
     def preview(self, url: str, prefer_h264: bool = True) -> dict[str, Any]:

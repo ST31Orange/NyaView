@@ -12,10 +12,14 @@ const state = {
   dlDir: null,
   cvDir: null,
   biliDir: null,
+  // image -> ebook
+  ebookDir: null,
+  ebookGroups: [],        // [{ name, images: [{path,name,...}] }]
+  ebookThumbs: new Map(), // path -> data URI
 };
 
 const $ = (id) => document.getElementById(id);
-const KIND_LABEL = { download: "下载", convert: "转码", bili: "B站缓存" };
+const KIND_LABEL = { download: "下载", convert: "转码", bili: "B站缓存", ebook: "电子书" };
 
 /* ---------------------------------------------------------- tabs */
 
@@ -200,6 +204,8 @@ function handleEvent(ev) {
       } else if (ev.target === "bili") {
         $("biliPath").textContent = ev.path;
         $("biliPath").dataset.folder = ev.path;
+      } else if (ev.target === "ebook") {
+        ebookSetFolder(ev.path);
       }
     }
     renderQueue();
@@ -262,9 +268,11 @@ async function refreshDirs() {
   state.dlDir = info.downloadDir;
   state.cvDir = info.convertedDir;
   state.biliDir = info.convertedDir;
+  state.ebookDir = info.convertedDir;
   $("dlDirPath").textContent = `当前：${info.downloadDir}`;
   $("cvDirPath").textContent = `当前：${info.convertedDir}`;
   $("biliDirPath").textContent = `当前：${info.convertedDir}`;
+  $("ebookDirPath").textContent = `当前：${info.convertedDir}`;
   $("footerStats").textContent = `ffmpeg ${info.ffmpeg.split(/[\\/]/).pop()} · yt-dlp ${info.ytdlp}`;
 }
 
@@ -282,12 +290,14 @@ function optimisticJob(jobId, kind, label) {
   renderQueue();
 }
 
+const DIR_LABELS = { dlDir: "dlDirPath", cvDir: "cvDirPath", biliDir: "biliDirPath", ebookDir: "ebookDirPath" };
+
 function pickDir(field) {
   return api().pick_output_dir().then((path) => {
     if (path) {
       state[field] = path;
-      const el = $(field === "dlDir" ? "dlDirPath" : field === "cvDir" ? "cvDirPath" : "biliDirPath");
-      el.textContent = `当前：${path}`;
+      const el = $(DIR_LABELS[field]);
+      if (el) el.textContent = `当前：${path}`;
     }
     return path;
   });
@@ -315,10 +325,207 @@ $("biliPickFolder").addEventListener("click", () => {
   });
 });
 
+/* -------- image pack -> ebook -------- */
+
+const EBOOK_THUMB_BATCH = 24;
+
+function ebookFlatImages() {
+  return state.ebookGroups.flatMap((g) => g.images);
+}
+
+function ebookSetFolder(folder) {
+  $("ebookPath").textContent = folder;
+  $("ebookPath").dataset.folder = folder;
+  if (!$("ebookTitle").value.trim()) {
+    const base = folder.split(/[\\/]/).filter(Boolean).pop() || "";
+    $("ebookTitle").placeholder = base || "默认用文件夹名";
+  }
+  scanEbook(folder);
+}
+
+async function scanEbook(folder) {
+  const mode = $("ebookMode").value;
+  const res = await api().scan_images(folder, mode);
+  if (!res || !res.ok) {
+    toast((res && res.error) || "扫描图片失败", "error");
+    return;
+  }
+  state.ebookGroups = (res.groups || []).map((g) => ({
+    name: g.name,
+    images: (g.images || []).slice(),
+  }));
+  state.ebookThumbs = new Map();
+  $("ebookListWrap").style.display = "block";
+  $("ebookRescan").style.display = "";
+  renderEbookList();
+  loadEbookThumbs();
+  toast(`已识别 ${res.total} 张图片（自动排序）`, "success");
+  log("info", `[电子书] 扫描 ${folder}：${res.total} 张，${state.ebookGroups.length} 组`);
+}
+
+function ebookItemHtml(image, groupIndex, indexInGroup, groupLength) {
+  const safeName = escapeHtml(image.name);
+  const safePath = escapeHtml(image.path);
+  const thumb = state.ebookThumbs.get(image.path);
+  const media = thumb
+    ? `<img src="${thumb}" alt="" loading="lazy" />`
+    : '<div class="ebook-thumb-fallback">🖼</div>';
+  return `
+    <div class="ebook-item" draggable="true"
+         data-group="${groupIndex}" data-index="${indexInGroup}" data-path="${safePath}"
+         title="${safePath}">
+      <span class="ebook-no">${indexInGroup + 1}</span>
+      ${media}
+      <div class="ebook-name">${safeName}</div>
+      <div class="ebook-arrows">
+        <button data-move="up" ${indexInGroup === 0 ? "disabled" : ""}>▲</button>
+        <button data-move="down" ${indexInGroup === groupLength - 1 ? "disabled" : ""}>▼</button>
+      </div>
+    </div>`;
+}
+
+function renderEbookList() {
+  const host = $("ebookList");
+  const multi = state.ebookGroups.length > 1;
+  host.innerHTML = state.ebookGroups
+    .map((group, gi) => {
+      const title = multi
+        ? `<div class="ebook-group-title">${escapeHtml(group.name || `第 ${gi + 1} 组`)} · ${group.images.length} 张</div>`
+        : "";
+      const items = group.images
+        .map((img, ii) => ebookItemHtml(img, gi, ii, group.images.length))
+        .join("");
+      return title + items;
+    })
+    .join("");
+  const total = ebookFlatImages().length;
+  $("ebookCount").textContent = multi
+    ? `已识别 ${total} 张 / ${state.ebookGroups.length} 组`
+    : `已识别 ${total} 张`;
+
+  host.querySelectorAll(".ebook-item").forEach((el) => {
+    const gi = Number(el.dataset.group);
+    const ii = Number(el.dataset.index);
+    el.querySelectorAll("[data-move]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        moveEbookImage(gi, ii, btn.dataset.move === "up" ? -1 : 1);
+      });
+    });
+    el.addEventListener("dragstart", (e) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", `${gi}:${ii}`);
+      el.classList.add("dragging");
+    });
+    el.addEventListener("dragend", () => {
+      el.classList.remove("dragging");
+      host.querySelectorAll(".ebook-item").forEach((n) =>
+        n.classList.remove("drop-before", "drop-after"));
+    });
+    el.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    });
+    el.addEventListener("dragenter", () => {
+      host.querySelectorAll(".ebook-item").forEach((n) =>
+        n.classList.remove("drop-before", "drop-after"));
+      el.classList.add("drop-before");
+    });
+    el.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const [fromGroup, fromIndex] = (e.dataTransfer.getData("text/plain") || "").split(":").map(Number);
+      const toGroup = Number(el.dataset.group);
+      const toIndex = Number(el.dataset.index);
+      if (Number.isNaN(fromGroup) || fromGroup !== toGroup || fromIndex === toIndex) return;
+      reorderEbook(fromGroup, fromIndex, toIndex);
+    });
+  });
+}
+
+function moveEbookImage(groupIndex, index, delta) {
+  const images = state.ebookGroups[groupIndex].images;
+  const target = index + delta;
+  if (target < 0 || target >= images.length) return;
+  reorderEbook(groupIndex, index, target);
+}
+
+function reorderEbook(groupIndex, from, to) {
+  const images = state.ebookGroups[groupIndex].images;
+  const [moved] = images.splice(from, 1);
+  images.splice(to, 0, moved);
+  renderEbookList();
+}
+
+function loadEbookThumbs() {
+  const pending = ebookFlatImages()
+    .map((img) => img.path)
+    .filter((p) => !state.ebookThumbs.has(p));
+  if (!pending.length) return;
+  const batch = pending.slice(0, EBOOK_THUMB_BATCH);
+  api().ebook_thumbnails(batch, 150).then((res) => {
+    if (!res || !res.ok) return;
+    (res.thumbs || []).forEach((t) => {
+      if (t.data) state.ebookThumbs.set(t.path, t.data);
+    });
+    renderEbookList();
+    if (pending.length > batch.length) loadEbookThumbs();
+  });
+}
+
+$("ebookPickFolder").addEventListener("click", () => {
+  api().pick_folder().then((path) => {
+    if (path) ebookSetFolder(path);
+  });
+});
+
+$("ebookRescan").addEventListener("click", () => {
+  const folder = $("ebookPath").dataset.folder;
+  if (folder) scanEbook(folder);
+});
+
+$("ebookMode").addEventListener("change", () => {
+  const folder = $("ebookPath").dataset.folder;
+  if (folder) scanEbook(folder); // regroup
+});
+
+$("ebookReset").addEventListener("click", () => {
+  const folder = $("ebookPath").dataset.folder;
+  if (folder) scanEbook(folder);
+});
+
+$("ebookDirPick").addEventListener("click", () => pickDir("ebookDir"));
+
+$("ebookStart").addEventListener("click", () => {
+  const folder = $("ebookPath").dataset.folder;
+  if (!folder) { toast("请先选择图片文件夹", "error"); return; }
+  const images = ebookFlatImages();
+  if (!images.length) { toast("没有可转换的图片", "error"); return; }
+  const options = {
+    destination: state.ebookDir,
+    format: $("ebookFormat").value,
+    mode: $("ebookMode").value,
+    title: $("ebookTitle").value.trim() || undefined,
+    author: $("ebookAuthor").value.trim() || undefined,
+    overwrite: $("ebookOverwrite").checked,
+    orders: state.ebookGroups
+      .filter((g) => g.images.length)
+      .map((g) => ({ name: g.name, images: g.images.map((i) => i.path) })),
+  };
+  api().start_ebook(folder, options).then((res) => {
+    if (res.ok) {
+      log("info", `[${res.jobId}] 提交电子书生成：${folder}（${images.length} 张，${options.format.toUpperCase()}）`);
+      optimisticJob(res.jobId, "ebook", $("ebookTitle").value.trim() || folder.split(/[\\/]/).filter(Boolean).pop());
+      switchPanel("queue");
+    } else {
+      toast(res.error || "提交失败", "error");
+    }
+  });
+});
+
 /* -------- download -------- */
 
-function collectPlaylistItems() {
-  const mode = $("dlParts").value;
+function collectPlaylistItems() {  const mode = $("dlParts").value;
   if (mode === "all") return "1-9999";
   if (mode === "range") {
     const range = ($("dlPartsRange").value || "").trim();
@@ -604,6 +811,8 @@ function setupDropZone(zoneId) {
         if (zone.id === "cvDropZone") {
           $("cvFilePath").textContent = p;
           $("cvFilePath").dataset.file = p;
+        } else if (zone.id === "ebookDropZone") {
+          ebookSetFolder(p);
         } else {
           $("biliPath").textContent = p;
           $("biliPath").dataset.folder = p;
@@ -615,6 +824,7 @@ function setupDropZone(zoneId) {
 
 setupDropZone("cvDropZone");
 setupDropZone("biliDropZone");
+setupDropZone("ebookDropZone");
 
 /* -------- update check (J) -------- */
 

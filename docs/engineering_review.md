@@ -340,6 +340,15 @@ class ProcessTimeoutError(EngineError): ...
 24. **关闭 Edge 仍读不到 Cookie → 定位到 App-Bound 设计并加 Firefox 自动回退（用户追问）**：用户关闭 Edge 后仍失败。**根本原因**：App-Bound 加密（v20）的解密 key 由浏览器进程签名封装，**与浏览器是否运行无关**——关闭浏览器只解除文件占用（#7271），但 v20 数据仍无任何外部进程可解（#10927）。yt-dlp issue #15401 亦确认不支持。
    - **可行方案（实测）**：**Firefox 的 cookie 在 Windows 上是明文 SQLite**，`extract_cookies_from_browser("firefox")` 实测成功提取 99 个 cookie。故 `load_cookies` 增加**浏览器自动回退**：按 配置浏览器 → firefox → chrome → edge 顺序尝试，任一成功即采用，并返回 `switched/requested` 告知用户实际用的浏览器；JS 提示"Edge 无法读取，已自动改用 Firefox"。App-Bound 失败文案改为双方案指引（Firefox 登录 / 插件导出 cookies.txt）。
    - 实测：请求 edge → 自动回退 firefox → 99 cookies 缓存成功（switched=true）。53 测试全绿。
+25. **新功能：图片包 → 电子书（漫画转 PDF / CBZ / EPUB）**：转换页新增第三个子标签「图片 → 电子书」。**技术选型（均先做原型实测再定）**：
+   - **PDF 用手写极简写入器**（仅 Pillow 依赖）：JPEG 页以 `/DCTDecode` **原样嵌入、完全不重编码**（实测 1.0× 无损、页数/MediaBox 正确、可被解析器读取）；非 JPEG 或 EXIF 旋转过的图先经 Pillow 转正/转 JPEG(q95,4:4:4)。**否决 img2pdf**：它强制依赖 pikepdf（C++ 库，实测 PyInstaller 打包 6 分钟未完成）；**否决 Pillow 原生 PDF**：会偷偷按 quality 75 重编码（实测 0.72×、有损）。
+   - **EPUB 手写固定版式 EPUB3**（仅标准库 zipfile）：`rendition:layout=pre-paginated`、mimetype 首项且不压缩、每页一个 XHTML、nav.xhtml；实测可被标准 EPUB 库正确读取（标题/页数/图片/spine）。不用 ebooklib/lxml。
+   - **CBZ** 用 zipfile（ZIP_STORED 无损）+ 可选 `ComicInfo.xml`。
+   - **自然排序**：数字按数值比较（`2.jpg` 在 `10.jpg` 前），支持跨子文件夹逐层排序。**修掉一个实测暴露的 bug**：数字段与文字段直接比较会 `TypeError: '<' not supported between str and int`（中文漫画名 `第2话` 与 `1.png` 混排时必现）——改为每个片段包成 `(kind, value)` 同构元组。
+   - **多文件夹两种模式**：合并成一本书 / 每个子文件夹一本（多本时命名自动加组名，避免同名冲突）。
+   - **手动排序 UI**：缩略图网格（后端转 base64 data URI，WebView 无法直接加载本地路径）+ HTML5 拖拽 + ▲▼ 按钮 + 「重置为自动排序」；提交时把最终页序作为 `orders` 传给后端，**手动排序优先于自动排序**。
+   - **写入原子化**：先写临时文件再 `os.replace`，取消时不会留下半成品。
+   - 依赖净增**只有 Pillow**；新增 22 个测试（排序/CBZ/PDF/EPUB 结构+无损性/分组/命名/缩略图）。全套 76 测试全绿。
 
 ---
 

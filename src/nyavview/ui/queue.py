@@ -17,10 +17,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from nyavview.core import service
-from nyavview.core.errors import CanceledError, NyaViewError
+from nyavview.core.errors import CanceledError, NyaViewError, TranscodeError
 from nyavview.core.events import ProgressEvent
 from nyavview.core.settings import Settings
-from nyavview.engines import FfmpegTranscoder, YtDlpEngine
+from nyavview.engines import EbookBuilder, FfmpegTranscoder, YtDlpEngine
 
 
 class JobStatus(str, Enum):
@@ -175,6 +175,13 @@ class JobManager:
         job.task = asyncio.run_coroutine_threadsafe(self._run_bili(job, source, options), self._loop)
         return job.id
 
+    def submit_ebook(self, source: str, options: dict[str, Any]) -> str:
+        label = options.get("title") or Path(source).name
+        job = self._register("ebook", str(label))
+        assert self._loop is not None
+        job.task = asyncio.run_coroutine_threadsafe(self._run_ebook(job, source, options), self._loop)
+        return job.id
+
     # ---------------------------------------------------------------- tasks
 
     def _job_settings(self, options: dict[str, Any]) -> Settings:
@@ -307,8 +314,64 @@ class JobManager:
         except Exception as exc:
             self._finish(job, error=f"{type(exc).__name__}: {exc}")
 
-    # ---------------------------------------------------------------- control
+    async def _run_ebook(self, job: Job, source: str, options: dict[str, Any]) -> None:
+        settings = self._job_settings(options)
+        target_dir = Path(options.get("destination") or settings.converted_dir)
+        try:
+            job.status = JobStatus.RUNNING
+            self._emit({"jobId": job.id, "type": "status", "status": "running"})
+            engine = EbookBuilder(settings, on_progress=lambda e: self._progress(job, e))
+            job.engine = engine
+            # The frontend sends the final page order (so manual reordering
+            # wins); fall back to a fresh natural-sorted scan when absent.
+            orders = options.get("orders")
+            if not orders:
+                info = engine.scan(Path(source), mode=options.get("mode") or "merge")
+                groups = info["groups"]
+            else:
+                groups = [
+                    {"name": g.get("name"), "images": list(g.get("images") or [])}
+                    for g in orders
+                    if g.get("images")
+                ]
+            if not groups:
+                raise TranscodeError("没有可转换的图片")
+            outputs = await engine.build(
+                groups,
+                target_dir,
+                fmt=options.get("format") or "cbz",
+                title=options.get("title") or "",
+                author=options.get("author") or "",
+                overwrite=bool(options.get("overwrite")),
+                comic_info=bool(options.get("comicInfo", True)),
+            )
+            job.output = outputs[0] if outputs else None
+            if len(outputs) > 1:
+                self._emit(
+                    {
+                        "jobId": job.id,
+                        "type": "progress",
+                        "kind": "ebook",
+                        "status": "running",
+                        "progress": 1.0,
+                        "percent": 100.0,
+                        "speed": None,
+                        "eta": None,
+                        "detail": "共生成 " + str(len(outputs)) + " 个文件：" + "、".join(p.name for p in outputs),
+                    }
+                )
+            self._finish(job)
+        except asyncio.CancelledError:
+            self._finish(job, cancelled=True)
+            raise
+        except CanceledError:
+            self._finish(job, cancelled=True)
+        except NyaViewError as exc:
+            self._finish(job, error=str(exc))
+        except Exception as exc:
+            self._finish(job, error=f"{type(exc).__name__}: {exc}")
 
+    # ---------------------------------------------------------------- control
     def cancel(self, job_id: str) -> bool:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -320,6 +383,10 @@ class JobManager:
             # Do NOT task.cancel() here — that raises asyncio.CancelledError
             # inside the coroutine, bypassing the CanceledError handler and
             # leaving the job stuck in "running" with no status event.
+            job.engine.cancel()
+        elif isinstance(job.engine, EbookBuilder):
+            # Cooperative flag: checked between books, so the file currently
+            # being written finishes and is renamed atomically.
             job.engine.cancel()
         elif job.task is not None:
             # ffmpeg: cancelling the asyncio task kills the subprocess

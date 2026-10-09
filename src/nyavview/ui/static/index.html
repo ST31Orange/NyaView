@@ -139,6 +139,7 @@
           <div class="sub-tabs" id="convertSubTabs">
             <button class="sub-tab active" data-sub="cv">本地文件 → MP4</button>
             <button class="sub-tab" data-sub="bili">B站缓存 → MP4</button>
+            <button class="sub-tab" data-sub="ebook">图片 → 电子书</button>
           </div>
 
           <!-- local file form -->
@@ -211,6 +212,58 @@
               <span class="path-line-inline" id="biliDirPath">未选择（使用默认目录）</span>
             </div>
             <button id="biliStart" class="btn btn-primary btn-block">开始转换</button>
+          </div>
+
+          <!-- image pack -> ebook form -->
+          <div id="sub-ebook" class="sub-panel">
+            <div id="ebookDropZone" class="drop-zone drop-zone-slim">把漫画图片文件夹拖到这里</div>
+            <div class="option-row">
+              <button id="ebookPickFolder" class="btn btn-ghost">选择图片文件夹</button>
+              <span class="path-line-inline" id="ebookPath">未选择文件夹</span>
+              <button id="ebookRescan" class="btn btn-ghost btn-sm" style="display:none">重新扫描</button>
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="ebookFormat">格式</label>
+              <select id="ebookFormat" class="select select-sm">
+                <option value="pdf" selected>PDF</option>
+                <option value="cbz">CBZ（漫画包）</option>
+                <option value="epub">EPUB</option>
+              </select>
+              <label class="field-label" for="ebookMode">多文件夹</label>
+              <select id="ebookMode" class="select select-sm">
+                <option value="merge" selected>合并成一本书</option>
+                <option value="per_folder">每个子文件夹一本</option>
+              </select>
+              <label class="field-label" for="ebookTitle">书名</label>
+              <input id="ebookTitle" class="select select-sm naming-input" type="text"
+                     placeholder="默认用文件夹名" spellcheck="false" />
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="ebookAuthor">作者</label>
+              <input id="ebookAuthor" class="select select-sm naming-input" type="text"
+                     placeholder="可选" spellcheck="false" />
+              <label class="toggle">
+                <input type="checkbox" id="ebookOverwrite" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">覆盖</span>
+              </label>
+              <span class="spacer"></span>
+              <label class="field-label" for="ebookDir">输出到</label>
+              <button id="ebookDirPick" class="btn btn-ghost path-pick">选择目录</button>
+            </div>
+            <div class="path-line" id="ebookDirPath">未选择（使用默认目录）</div>
+
+            <div id="ebookListWrap" style="display:none">
+              <div class="ebook-list-head">
+                <span id="ebookCount" class="ebook-count">已识别 0 张</span>
+                <span class="hint-line-inline">拖拽缩略图或点 ▲▼ 调整页序</span>
+                <span class="spacer"></span>
+                <button id="ebookReset" class="btn btn-ghost btn-sm">重置为自动排序</button>
+              </div>
+              <div id="ebookList" class="ebook-list"></div>
+            </div>
+
+            <button id="ebookStart" class="btn btn-primary btn-block">开始生成电子书</button>
           </div>
         </div>
       </section>

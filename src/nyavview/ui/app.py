@@ -115,6 +115,7 @@ def _setup_drop_handlers(window: Any, manager: JobManager) -> None:
     try:
         window.dom.get_element("#cvDropZone").events.drop += _make_handler("cv")
         window.dom.get_element("#biliDropZone").events.drop += _make_handler("bili")
+        window.dom.get_element("#ebookDropZone").events.drop += _make_handler("ebook")
     except Exception as exc:  # noqa: BLE001 - DOM setup is best-effort
         print(f"[drop] failed to register DOM drop handlers: {exc!r}")
 
