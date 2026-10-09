@@ -65,8 +65,12 @@ $("cookieBtn").addEventListener("click", () => {
     btn.disabled = false;
     if (res.ok) {
       const skipNote = res.skipped ? `（跳过 ${res.skipped} 个被占用的配置）` : "";
-      toast(`已加载 ${res.count} 个 Cookie，已缓存${skipNote}`, "success");
-      log("info", `Cookie 已从 ${res.browser} 导出 ${res.count} 个${skipNote} → ${res.path}`);
+      const switchNote = res.switched ? `（${res.requested} 无法读取，已自动改用 ${res.browser}）` : "";
+      toast(`已加载 ${res.count} 个 Cookie${switchNote}，已缓存`, "success", 7000);
+      log("info", `Cookie 已从 ${res.browser} 导出 ${res.count} 个${skipNote}${switchNote} → ${res.path}`);
+      if (res.switched) {
+        log("warn", `提示：${res.requested} 使用了 App-Bound 加密无法读取，已改用 ${res.browser}；请确认已在 ${res.browser} 中登录目标网站。`);
+      }
     } else {
       const full = `${res.error || ""} ${res.detail || ""} ${res.hint || ""}`.trim();
       toast(full, "error", 9000);

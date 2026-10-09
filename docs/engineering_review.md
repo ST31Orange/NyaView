@@ -337,6 +337,9 @@ class ProcessTimeoutError(EngineError): ...
    - 直读 Default 数据库发现 **全部 74 个 cookie 的加密前缀都是 `763230` = "v20"**——新版 Chromium **App-Bound Encryption**，key 绑定浏览器进程签名，**普通进程（即使同一用户）按设计无法解密**（防恶意软件窃取 cookie）；Local State 里也出现 `app_bound_encrypted_key`。安装的 yt-dlp 2026.08.19 的 Windows 解密器只支持 v10/v11，不支持 v20。
    - **结论**：对使用新版 Edge 的用户，程序**无法直接从浏览器读取 cookie**（开不开浏览器都一样）——这是 Chromium 的架构性限制，不是可修的 bug。
    - **修复**：`load_cookies` 改为**遍历所有 profile、逐个提取并合并成功的**（锁定 profile 不再拖垮整体）；全部失败时**区分两种错误**——检测到 "decrypt/dpapi" 错误 → 返回明确的 App-Bound 指引（用浏览器插件如「Get cookies.txt LOCALLY」导出 cookies.txt 填到设置页）；否则 → "关闭浏览器重试"。设置页 Cookie 文件字段加"选择文件…"按钮闭环引导。实测真实 Edge 返回 v20 指引文案；53 测试全绿。
+24. **关闭 Edge 仍读不到 Cookie → 定位到 App-Bound 设计并加 Firefox 自动回退（用户追问）**：用户关闭 Edge 后仍失败。**根本原因**：App-Bound 加密（v20）的解密 key 由浏览器进程签名封装，**与浏览器是否运行无关**——关闭浏览器只解除文件占用（#7271），但 v20 数据仍无任何外部进程可解（#10927）。yt-dlp issue #15401 亦确认不支持。
+   - **可行方案（实测）**：**Firefox 的 cookie 在 Windows 上是明文 SQLite**，`extract_cookies_from_browser("firefox")` 实测成功提取 99 个 cookie。故 `load_cookies` 增加**浏览器自动回退**：按 配置浏览器 → firefox → chrome → edge 顺序尝试，任一成功即采用，并返回 `switched/requested` 告知用户实际用的浏览器；JS 提示"Edge 无法读取，已自动改用 Firefox"。App-Bound 失败文案改为双方案指引（Firefox 登录 / 插件导出 cookies.txt）。
+   - 实测：请求 edge → 自动回退 firefox → 99 cookies 缓存成功（switched=true）。53 测试全绿。
 
 ---
 

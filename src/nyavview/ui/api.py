@@ -156,44 +156,35 @@ class Api:
         except Exception:
             return -1  # unknown
 
-    def load_cookies(self, browser: str = "") -> dict[str, Any]:
-        """Export cookies from a browser into a persistent cache file.
+    @staticmethod
+    def _extract_browser_cookies(browser: str) -> tuple[Any, list[str], int]:
+        """Extract cookies from every profile of ``browser``.
 
-        Iterates every browser profile and merges whatever extracts
-        successfully — a locked profile (browser running) no longer fails the
-        whole export, so e.g. Edge's Default profile cookies are still saved
-        even if Profile 1 is in use. Once exported, ``_opts`` prefers the
-        cached cookie file.
+        Returns ``(jar, errors, profile_count)``. Iterating profiles means a
+        locked one (browser running) no longer fails the whole export.
         """
-        import os
         from pathlib import Path as _Path
 
         from yt_dlp.cookies import (
-            YoutubeDLCookieJar,
-            extract_cookies_from_browser,
-            _get_chromium_based_browser_settings,
             CHROMIUM_BASED_BROWSERS,
+            YoutubeDLCookieJar,
+            _get_chromium_based_browser_settings,
+            extract_cookies_from_browser,
         )
 
-        browser = (browser or self._manager.settings.cookies_from_browser or "edge").strip()
         jar = YoutubeDLCookieJar()
         errors: list[str] = []
-        profile_names: list[str | None] = [None]  # None -> yt-dlp picks newest
+        profile_names: list[Any] = [None]  # None -> yt-dlp picks newest
 
         if browser.lower() in CHROMIUM_BASED_BROWSERS:
             try:
                 browser_dir = _Path(_get_chromium_based_browser_settings(browser)["browser_dir"])
-                # One profile dir per folder holding a Cookies DB directly or
-                # under Network/. Explicit list so a locked profile is skipped.
                 if browser_dir.is_dir():
                     names = [
                         d.name
                         for d in browser_dir.iterdir()
                         if d.is_dir()
-                        and (
-                            (d / "Cookies").is_file()
-                            or (d / "Network" / "Cookies").is_file()
-                        )
+                        and ((d / "Cookies").is_file() or (d / "Network" / "Cookies").is_file())
                     ]
                     if names:
                         profile_names = sorted(names)
@@ -206,23 +197,48 @@ class Api:
                 for c in sub:
                     jar.set_cookie(c)
             except Exception as exc:  # locked / undecryptable profile — try next
-                errors.append(f"{prof or 'default'}: {type(exc).__name__}: {exc}")
+                errors.append(f"{browser}/{prof or 'default'}: {type(exc).__name__}: {exc}")
+        return jar, errors, len(profile_names)
 
-        if len(list(jar)) == 0:
-            # Distinguish the two failure modes so the user gets actionable help.
-            joined = " | ".join(errors).lower()
-            if "decrypt" in joined or "dpapi" in joined:
-                # Newer Chromium (Edge/Chrome 128+) encrypts cookies with
-                # App-Bound Encryption (v20), which ordinary processes cannot
-                # decrypt by design. No amount of closing the browser helps.
+    def load_cookies(self, browser: str = "") -> dict[str, Any]:
+        """Export cookies from a browser into a persistent cache file.
+
+        Tries the configured browser first; when its cookies are unreadable
+        (Chromium App-Bound Encryption / v20 — closing the browser does NOT
+        help) it automatically falls back to other installed browsers, where
+        Firefox always works because it stores cookies unencrypted. Once
+        exported, ``_opts`` prefers the cached cookie file.
+        """
+        primary = (browser or self._manager.settings.cookies_from_browser or "edge").strip()
+        order = [primary] + [b for b in ("firefox", "chrome", "edge") if b != primary.lower()]
+
+        jar = None
+        used = primary
+        errors: list[str] = []
+        profiles = 0
+        app_bound = False
+        for candidate in order:
+            sub, errs, profs = self._extract_browser_cookies(candidate)
+            errors.extend(errs)
+            if "decrypt" in " ".join(errs).lower() or "dpapi" in " ".join(errs).lower():
+                app_bound = True
+            if len(list(sub)) > 0:
+                jar, used, profiles = sub, candidate, profs
+                break
+
+        if jar is None:
+            n_running = self._running_browser_processes(primary)
+            if app_bound:
+                # Chromium App-Bound Encryption (v20): the key is sealed to the
+                # browser's own code signature, so NO other process can decrypt
+                # it — opening or closing the browser makes no difference.
                 return {
                     "ok": False,
-                    "error": "当前浏览器的 Cookie 使用了新版 App-Bound 加密，程序无法直接读取。",
-                    "detail": "这是浏览器的新安全机制（v20），不是程序问题。",
-                    "hint": "请用浏览器插件（如「Get cookies.txt LOCALLY」）导出 cookies.txt，然后在「设置」页的「Cookie 文件」中填写该文件路径。",
+                    "error": f"{primary} 的 Cookie 使用了 App-Bound 加密（v20），任何程序（不只是本程序）都无法读取。",
+                    "detail": "这是 Chromium 的新安全机制，关闭浏览器也没用。",
+                    "hint": "两种可行做法：① 在 Firefox 里登录 B站 后，在「设置」把浏览器选为 Firefox 再点 🍪（Firefox 的 Cookie 可读取）；② 用浏览器插件（如「Get cookies.txt LOCALLY」）导出 cookies.txt，在「设置」页「Cookie 文件」选择该文件。",
                 }
-            n_running = self._running_browser_processes(browser)
-            detail = f"检测到 {n_running} 个 {browser} 进程正在运行。" if n_running > 0 else ""
+            detail = f"检测到 {n_running} 个 {primary} 进程正在运行。" if n_running > 0 else ""
             return {
                 "ok": False,
                 "error": "未能从浏览器读取任何 Cookie。",
@@ -244,9 +260,11 @@ class Api:
             "ok": True,
             "path": str(path),
             "count": count,
-            "browser": browser,
-            "profiles": len(profile_names),
-            "skipped": len(errors),
+            "browser": used,
+            "requested": primary,
+            "switched": used != primary,
+            "profiles": profiles,
+            "skipped": len([e for e in errors if e.startswith(f"{used}/")]),
         }
 
     # ----------------------------------------------------------- dialogs
