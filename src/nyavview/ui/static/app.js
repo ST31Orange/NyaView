@@ -313,9 +313,10 @@ function collectDownload() {
   const items = collectPlaylistItems();
   if (items === null && $("dlParts").value === "range") return null;
   const formatId = state.pickedFormat || null;
+  const audioOnly = $("dlAudioOnly").checked;
   return {
     destination: state.dlDir,
-    audioOnly: $("dlAudioOnly").checked,
+    audioOnly,
     overwrite: $("dlOverwrite").checked,
     cookieFile,
     cookiesFromBrowser,
@@ -324,7 +325,8 @@ function collectDownload() {
     writeSubs: $("dlWriteSubs").checked,
     maxRetries: $("dlAutoRetry").checked ? 3 : 1,
     outtmpl: ($("dlNaming").value || "").trim() || undefined,
-    format: formatId,
+    format: audioOnly ? null : formatId,
+    audioFormat: audioOnly ? $("dlAudioFormat").value : null,
   };
 }
 
@@ -406,6 +408,20 @@ $("dlPreviewClose").addEventListener("click", () => {
 $("dlParts").addEventListener("change", () => {
   $("dlPartsRange").style.display = $("dlParts").value === "range" ? "" : "none";
 });
+
+/* 仅音频: swap 画质 for 音频格式 (video quality is irrelevant for audio) */
+function syncAudioOnlyUI() {
+  const on = $("dlAudioOnly").checked;
+  $("dlAudioFormat").style.display = on ? "" : "none";
+  $("dlAudioFormatLabel").style.display = on ? "" : "none";
+  // hide the 画质 select + its label when audio-only
+  const qLabel = $("dlQuality").previousElementSibling;
+  $("dlQuality").style.display = on ? "none" : "";
+  if (qLabel && qLabel.classList.contains("field-label") && qLabel.textContent.trim() === "画质") {
+    qLabel.style.display = on ? "none" : "";
+  }
+}
+$("dlAudioOnly").addEventListener("change", syncAudioOnlyUI);
 
 /* cookie file: show the picker when '使用 Cookie 文件' is chosen */
 $("dlCookies").addEventListener("change", () => {

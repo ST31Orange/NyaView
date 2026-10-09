@@ -98,6 +98,16 @@
               <option value="h264" selected>H.264 优先（最兼容）</option>
               <option value="best">最佳（AV1/HEVC）</option>
             </select>
+            <label class="field-label" for="dlAudioFormat" id="dlAudioFormatLabel" style="display:none">音频格式</label>
+            <select id="dlAudioFormat" class="select select-sm" style="display:none">
+              <option value="auto" selected>自适应（原生格式）</option>
+              <option value="mp3">MP3</option>
+              <option value="aac">AAC</option>
+              <option value="m4a">M4A</option>
+              <option value="flac">FLAC（无损）</option>
+              <option value="wav">WAV（无损）</option>
+              <option value="opus">OPUS</option>
+            </select>
             <label class="field-label" for="dlNaming">命名</label>
             <input id="dlNaming" class="select naming-input" type="text"
                    placeholder="%(title).180B.%(ext)s" spellcheck="false" />

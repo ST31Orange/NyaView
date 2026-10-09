@@ -227,6 +227,7 @@ class JobManager:
                         write_subs=bool(options.get("writeSubs")),
                         outtmpl=options.get("outtmpl") or settings.naming_template,
                         format_id=options.get("format") or None,
+                        audio_format=options.get("audioFormat") or None,
                     )
                     break
                 except (CanceledError, asyncio.CancelledError):

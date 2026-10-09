@@ -81,6 +81,7 @@ class YtDlpEngine:
         write_subs: bool = False,
         outtmpl: Optional[str] = None,
         format_id: Optional[str] = None,
+        audio_format: Optional[str] = None,
     ) -> dict[str, Any]:
         opts: dict[str, Any] = {
             # Custom naming template (H) or default "<title>.180B.<ext>".
@@ -118,10 +119,14 @@ class YtDlpEngine:
             opts["cookiefile"] = str(self.settings.cookie_file.expanduser())
         if audio_only:
             opts["format"] = "bestaudio/best"
+            # Audio export format (仅音频). 'auto' keeps the source's native
+            # audio format without re-encoding (fastest, lossless); anything
+            # else converts via yt-dlp's FFmpegExtractAudio.
+            codec = (audio_format or "auto").lower()
             opts["postprocessors"] = [
                 {
                     "key": "FFmpegExtractAudio",
-                    "preferredcodec": "m4a",
+                    "preferredcodec": "best" if codec == "auto" else codec,
                     "nopostoverwrites": True,
                 }
             ]
@@ -183,6 +188,7 @@ class YtDlpEngine:
         write_subs: bool = False,
         outtmpl: Optional[str] = None,
         format_id: Optional[str] = None,
+        audio_format: Optional[str] = None,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415 - imported lazily to keep import cost out of CLI path
         from yt_dlp import YoutubeDL
@@ -190,7 +196,7 @@ class YtDlpEngine:
         try:
             return self._run_once(
                 url, destination, audio_only, overwrite, YoutubeDL,
-                playlist_items, prefer_h264, write_subs, outtmpl, format_id,
+                playlist_items, prefer_h264, write_subs, outtmpl, format_id, audio_format,
             )
         except yt_dlp.utils.DownloadError as exc:
             message = str(exc)
@@ -212,7 +218,7 @@ class YtDlpEngine:
                 try:
                     return engine._run_once(
                         url, destination, audio_only, overwrite, YoutubeDL,
-                        playlist_items, prefer_h264, write_subs, outtmpl, format_id,
+                        playlist_items, prefer_h264, write_subs, outtmpl, format_id, audio_format,
                     )
                 except yt_dlp.utils.DownloadError as retry_exc:
                     raise DownloadError(str(retry_exc)) from retry_exc
@@ -230,6 +236,7 @@ class YtDlpEngine:
         write_subs: bool = False,
         outtmpl: Optional[str] = None,
         format_id: Optional[str] = None,
+        audio_format: Optional[str] = None,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415
 
@@ -242,6 +249,7 @@ class YtDlpEngine:
             write_subs=write_subs,
             outtmpl=outtmpl,
             format_id=format_id,
+            audio_format=audio_format,
         )
         try:
             with ydl_cls(opts) as ydl:
@@ -264,15 +272,23 @@ class YtDlpEngine:
                 return candidate.resolve()
         except (KeyError, IndexError, TypeError):
             pass
-        # 2) safety net: newest matching file in the destination
-        pattern = "*.m4a" if audio_only else "*.mp4"
+        # 2) safety net: newest finished (non-temp) file in the destination.
+        #    Audio-only output extension varies by chosen format (mp3/aac/m4a/
+        #    flac/wav/opus/webm…), so match any non-partial file.
+        skip = (".part", ".ytdl", ".tmp", ".temp")
         candidates = sorted(
-            destination.glob(pattern),
+            (
+                p
+                for p in destination.iterdir()
+                if p.is_file()
+                and not p.name.lower().endswith(skip)
+                and (audio_only or p.suffix.lower() == ".mp4")
+            ),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
         if not candidates:
-            raise DownloadError(f"yt-dlp finished but produced no {pattern} in {destination}")
+            raise DownloadError(f"yt-dlp finished but produced no output in {destination}")
         return candidates[0].resolve()
 
     async def download(
@@ -287,6 +303,7 @@ class YtDlpEngine:
         write_subs: bool = False,
         outtmpl: Optional[str] = None,
         format_id: Optional[str] = None,
+        audio_format: Optional[str] = None,
     ) -> Path:
         destination = Path(destination).expanduser().resolve()
         destination.mkdir(parents=True, exist_ok=True)
@@ -303,6 +320,7 @@ class YtDlpEngine:
             write_subs,
             outtmpl,
             format_id,
+            audio_format,
         )
 
     async def preview(self, url: str, prefer_h264: bool = True) -> dict[str, Any]:

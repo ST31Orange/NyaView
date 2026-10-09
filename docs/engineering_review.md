@@ -322,6 +322,11 @@ class ProcessTimeoutError(EngineError): ...
    - JS 预览下拉编码标签修正（HEVC 显示"HEVC"、H.264 显示"H.264"、AV1 显示"AV1"，原来 HEVC 显示 HEV1、H.264 显示 AVC1 易混淆）；
    - 切换"画质"下拉会重新拉取预览格式列表。
 19. **右上角运行时信息移位 + 打赏弹窗（用户要求）**：右上角的"ffmpeg · yt-dlp 运行时徽章"改为**纯图标按钮**（绿点圆形，hover 高亮），点击弹出**打赏弹窗**（中英文文案 + 微信/支付宝收款码两张图片，图片从 `D:\AIHOME\CODEX\收款码.jpg`、`WX收款码.jpg` 复制到 `static/img/qr-alipay.jpg`、`qr-wechat.jpg` 随 EXE 打包）；运行时信息移到**右下角** `#footerStats`，与左下角 `#footerInfo` 同格式（`.footer` 统一 12px / 次要色）。弹窗支持 × 按钮、点遮罩、Esc 关闭。`cdp_check.py` 同步改为读 `#footerStats`。
+20. **仅音频格式选择（用户要求）**：仅音频原本固定转 m4a。新增"音频格式"下拉（**自适应(原生) / MP3 / AAC / M4A / FLAC(无损) / WAV(无损) / OPUS**）：
+   - 引擎 `_opts` 增 `audio_format` 参数：`auto` → `preferredcodec="best"`（**保持源音频原生格式、不重编码**，最快最无损）；其他值直接作 preferredcodec 交给 yt-dlp 的 FFmpegExtractAudio 转换；
+   - `_locate_output` 的音频 safety net 改为匹配任意非临时文件（输出扩展名随格式变化：m4a/mp3/aac/flac/wav/opus/webm…）；
+   - UI：仅音频开关打开时**显示音频格式下拉、隐藏画质**（画质对音频无意义），关闭时恢复；`collectDownload` 传 `audioFormat`（仅音频时强制 `format=null` 不混入视频格式）。
+   - 实测：auto→.m4a(1.6MB 原生)、mp3→.mp3(1.5MB)、aac→.m4a、flac→.flac(21MB 无损)。52 测试全绿。
 
 ---
 

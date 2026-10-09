@@ -20,8 +20,14 @@ def test_human_bytes() -> None:
 def test_opts_audio_only() -> None:
     opts = _engine()._opts(Path("d"), audio_only=True, overwrite=False)
     assert opts["format"] == "bestaudio/best"
-    assert opts["postprocessors"][0]["preferredcodec"] == "m4a"
+    # default (auto) keeps the source's native format: preferredcodec 'best'
+    assert opts["postprocessors"][0]["preferredcodec"] == "best"
     assert "merge_output_format" not in opts
+
+
+def test_opts_audio_only_explicit_format() -> None:
+    opts = _engine()._opts(Path("d"), audio_only=True, overwrite=False, audio_format="mp3")
+    assert opts["postprocessors"][0]["preferredcodec"] == "mp3"
 
 
 def test_opts_video() -> None:
@@ -125,7 +131,7 @@ def test_run_falls_back_when_cookie_db_locked(monkeypatch) -> None:
 
     def fake_run_once(self, url, destination, audio_only, overwrite, ydl_cls,
                       playlist_items=None, prefer_h264=True, write_subs=False,
-                      outtmpl=None, format_id=None):
+                      outtmpl=None, format_id=None, audio_format=None):
         calls.append(str(self.settings.cookies_from_browser))
         if self.settings.cookies_from_browser:
             raise yt_dlp.utils.DownloadError(
