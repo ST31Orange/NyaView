@@ -371,13 +371,14 @@ function ebookItemHtml(image, groupIndex, indexInGroup, groupLength) {
   const safePath = escapeHtml(image.path);
   const thumb = state.ebookThumbs.get(image.path);
   const media = thumb
-    ? `<img src="${thumb}" alt="" loading="lazy" />`
+    ? `<img src="${thumb}" alt="" loading="lazy" draggable="false" />`
     : '<div class="ebook-thumb-fallback">🖼</div>';
   return `
-    <div class="ebook-item" draggable="true"
+    <div class="ebook-item"
          data-group="${groupIndex}" data-index="${indexInGroup}" data-path="${safePath}"
-         title="${safePath}">
+         title="${safePath}  （双击看大图）">
       <span class="ebook-no">${indexInGroup + 1}</span>
+      <span class="ebook-grip" data-grip="1" title="按住拖动排序">⠿</span>
       ${media}
       <div class="ebook-name">${safeName}</div>
       <div class="ebook-arrows">
@@ -415,18 +416,10 @@ function renderEbookList() {
         moveEbookImage(gi, ii, btn.dataset.move === "up" ? -1 : 1);
       });
     });
-    el.addEventListener("dragstart", (e) => {
-      dragFrom = { group: gi, index: ii };
-      e.dataTransfer.effectAllowed = "move";
-      // Chromium requires some data to be set for the drag to be accepted.
-      e.dataTransfer.setData("text/plain", `${gi}:${ii}`);
-      el.classList.add("dragging");
-    });
-    el.addEventListener("dragend", () => {
-      dragFrom = null;
-      clearDropMarks();
-      host.querySelectorAll(".ebook-item").forEach((n) => n.classList.remove("dragging"));
-    });
+    // Pointer-based reordering: works with mouse, touch and pen, and starts
+    // as soon as the pointer moves a few pixels — native HTML5 drag needs a
+    // ~500ms long-press on touch (and often fails inside a scrollable list).
+    el.addEventListener("pointerdown", (e) => startEbookDrag(e, gi, ii, el));
     // Double-click opens the large single-image view.
     el.addEventListener("dblclick", (e) => {
       e.preventDefault();
@@ -466,33 +459,80 @@ function ebookDropTarget(x, y) {
   };
 }
 
-function bindEbookDropZone() {
-  const host = $("ebookList");
-  // Container-level handlers make dragging forgiving: a drop anywhere in the
-  // list (including the gaps between thumbnails or the empty space after the
-  // last one) resolves to the closest thumbnail.
-  host.addEventListener("dragover", (e) => {
-    if (!dragFrom) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const t = ebookDropTarget(e.clientX, e.clientY);
-    clearDropMarks();
-    if (t && t.group === dragFrom.group) t.el.classList.add(t.after ? "drop-after" : "drop-before");
-  });
-  host.addEventListener("drop", (e) => {
-    if (!dragFrom) return;
-    e.preventDefault();
-    const t = ebookDropTarget(e.clientX, e.clientY);
-    const from = dragFrom;
-    dragFrom = null;
-    clearDropMarks();
-    if (!t || t.group !== from.group) return;
-    let to = t.index;
-    if (t.after && to < state.ebookGroups[from.group].images.length - 1) to += 1;
-    if (to === from.index) return;
-    reorderEbook(from.group, from.index, to);
-  });
+const EBOOK_DRAG_THRESHOLD = 4; // px before a press becomes a drag
+
+function startEbookDrag(e, group, index, el) {
+  if (e.button !== 0 && e.pointerType === "mouse") return; // left button only
+  const fromGrip = !!e.target.closest(".ebook-grip");
+  // Touch/pen must start on the grip so the list stays scrollable by finger;
+  // with a mouse the whole thumbnail is grabbable.
+  if (e.pointerType !== "mouse" && !fromGrip) return;
+  dragFrom = {
+    group,
+    index,
+    startX: e.clientX,
+    startY: e.clientY,
+    active: false,
+    pointerId: e.pointerId,
+    el,
+  };
+  try {
+    el.setPointerCapture(e.pointerId);
+  } catch (err) {
+    /* capture is best-effort */
+  }
 }
+
+function moveEbookDrag(e) {
+  if (!dragFrom || e.pointerId !== dragFrom.pointerId) return;
+  const dx = e.clientX - dragFrom.startX;
+  const dy = e.clientY - dragFrom.startY;
+  if (!dragFrom.active) {
+    if (dx * dx + dy * dy < EBOOK_DRAG_THRESHOLD * EBOOK_DRAG_THRESHOLD) return;
+    dragFrom.active = true;
+    dragFrom.el.classList.add("dragging");
+  }
+  e.preventDefault();
+  const t = ebookDropTarget(e.clientX, e.clientY);
+  clearDropMarks();
+  if (t && t.group === dragFrom.group) t.el.classList.add(t.after ? "drop-after" : "drop-before");
+  ebookAutoScroll(e.clientY);
+}
+
+function endEbookDrag(e) {
+  if (!dragFrom || e.pointerId !== dragFrom.pointerId) return;
+  const st = dragFrom;
+  dragFrom = null;
+  try {
+    if (st.el.hasPointerCapture && st.el.hasPointerCapture(st.pointerId)) {
+      st.el.releasePointerCapture(st.pointerId);
+    }
+  } catch (err) {
+    /* ignore */
+  }
+  st.el.classList.remove("dragging");
+  clearDropMarks();
+  if (!st.active) return; // it was a click, not a drag
+  const t = ebookDropTarget(e.clientX, e.clientY);
+  if (!t || t.group !== st.group) return;
+  const count = state.ebookGroups[st.group].images.length;
+  let to = t.index;
+  if (t.after && to < count - 1) to += 1;
+  if (to !== st.index) reorderEbook(st.group, st.index, to);
+}
+
+/** Keep the list scrolling when dragging near its top/bottom edge. */
+function ebookAutoScroll(clientY) {
+  const host = $("ebookList");
+  const r = host.getBoundingClientRect();
+  const margin = 44;
+  if (clientY < r.top + margin) host.scrollTop -= 14;
+  else if (clientY > r.bottom - margin) host.scrollTop += 14;
+}
+
+document.addEventListener("pointermove", moveEbookDrag);
+document.addEventListener("pointerup", endEbookDrag);
+document.addEventListener("pointercancel", endEbookDrag);
 
 function moveEbookImage(groupIndex, index, delta) {
   const images = state.ebookGroups[groupIndex].images;
@@ -938,7 +978,6 @@ function setupDropZone(zoneId) {
 setupDropZone("cvDropZone");
 setupDropZone("biliDropZone");
 setupDropZone("ebookDropZone");
-bindEbookDropZone(); // in-page thumbnail reordering (container-level drop)
 
 /* -------- update check (J) -------- */
 

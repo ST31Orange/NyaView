@@ -691,7 +691,38 @@ body {
   border-radius: 3px;
   display: block;
   background: var(--bg-deep);
+  -webkit-user-drag: none;
+  user-drag: none;
 }
+
+/* Drag handle: dragging it starts a reorder immediately on mouse AND touch
+   (touch-action:none stops the list from scrolling instead). Tapping anywhere
+   else on the thumbnail still scrolls the list normally on touch. */
+.ebook-grip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(20, 18, 14, 0.66);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.ebook-item:hover .ebook-grip { opacity: 1; }
+
+.ebook-grip:active { cursor: grabbing; }
+
+.ebook-item.dragging .ebook-grip { opacity: 1; }
 
 .ebook-item .ebook-thumb-fallback {
   height: 186px;
