@@ -1,7 +1,8 @@
-﻿"""Tests for the image-pack -> ebook engine (PDF / CBZ / EPUB)."""
+"""Tests for the image-pack -> ebook engine (PDF / CBZ / EPUB)."""
 
 from __future__ import annotations
 
+import re
 import zipfile
 from pathlib import Path
 
@@ -440,11 +441,39 @@ def test_split_text_chapters_splits_on_headings() -> None:
     assert chapters[0][1] == ["甲", "乙"]
 
 
-def test_split_text_chapters_falls_back_to_parts() -> None:
-    text = "\n".join(f"第 {i} 段正文" for i in range(1200))
-    chapters = split_text_chapters(text)
+def test_split_text_chapters_untitled_book_uses_the_book_name() -> None:
+    """A file with no headings is ONE chapter named after the book — not a run
+    of generic "第 N 部分" entries (which made merged TOCs a wall of "第 1 部分")."""
+    text = "第一段正文。\n第二段正文。\n第三段正文。"
+    chapters = split_text_chapters(text, book_title="大衮")
+    assert [c[0] for c in chapters] == ["大衮"]
+    assert chapters[0][1] == ["第一段正文。", "第二段正文。", "第三段正文。"]
+    # without a book title it falls back to a neutral label, never 第 N 部分
+    assert split_text_chapters(text)[0][0] == "正文"
+
+
+def test_split_text_chapters_single_heading_is_kept() -> None:
+    """Regression: a book with exactly one heading used to have that heading
+    thrown away and replaced by numbered parts."""
+    text = "第一章 起\n甲甲甲\n乙乙乙\n"
+    assert [c[0] for c in split_text_chapters(text, book_title="某书")] == ["第一章 起"]
+
+
+def test_split_text_chapters_huge_untitled_book_splits_with_book_name() -> None:
+    text = "\n".join("正" * 200 for _ in range(2000))  # ~400k chars, no headings
+    chapters = split_text_chapters(text, book_title="长夜")
     assert len(chapters) > 1
-    assert all(c[0].startswith("第 ") for c in chapters)
+    assert all(c[0].startswith("长夜（") for c in chapters)
+    assert chapters[0][0] == f"长夜（1/{len(chapters)}）"
+
+
+def test_is_chapter_heading_recognises_roman_numerals() -> None:
+    assert is_chapter_heading("I.粘土中的恐怖")
+    assert is_chapter_heading("II. 风暴中的过客")
+    assert is_chapter_heading("一、初见")
+    # prose must not be mistaken for a heading
+    assert not is_chapter_heading("I. 这是一个很长的英文句子，不应该被当作小标题来处理的情况。")
+    assert not is_chapter_heading("我们第一章说的是另一个故事，很长很长的一段正文内容。")
 
 
 @pytest.mark.asyncio
@@ -694,3 +723,28 @@ def test_progress_events_carry_the_job_kind_not_the_engine_flavour(tmp_path: Pat
         assert jobs[job_id]["kind"] == "merge"
     finally:
         manager.stop()
+
+
+def test_preface_before_the_first_heading_is_not_named_after_the_book() -> None:
+    """Title page / epigraph text before the first heading must not repeat the
+    book name in the TOC."""
+    text = "The Call of Cthulhu  译者：竹子\n（原件见于…）\nI.粘土中的恐怖\n正文甲\nII.来自海洋的疯狂\n正文乙\n"
+    chapters = split_text_chapters(text, book_title="克苏鲁的呼唤")
+    assert [c[0] for c in chapters] == ["前言", "I.粘土中的恐怖", "II.来自海洋的疯狂"]
+
+
+@pytest.mark.asyncio
+async def test_merged_txt_toc_has_no_repeated_placeholder_entries(tmp_path: Path) -> None:
+    """Regression: merging heading-less TXTs produced one "第 1 部分" per book."""
+    files = []
+    for name in ["大衮", "异乡人", "记忆"]:
+        path = tmp_path / f"{name}.txt"
+        path.write_text(f"Dagon\n这是{name}的正文内容，没有任何章节标题。\n", encoding="utf-8")
+        files.append(path)
+    out = await _engine().merge(files, tmp_path / "out", fmt="epub", title="合集")
+    with zipfile.ZipFile(out[0]) as zf:
+        nav = zf.read("OEBPS/nav.xhtml").decode("utf-8")
+    titles = re.findall(r'<a href="[^"]+">([^<]+)</a>', nav)
+    assert "部分" not in nav
+    assert titles == ["大衮", "异乡人", "记忆"]   # book names, no duplicated children
+    assert len(titles) == len(set(titles))

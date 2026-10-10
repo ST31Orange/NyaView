@@ -671,11 +671,24 @@ class BookSource:
 _TEXT_ENCODINGS = ("utf-8-sig", "utf-16", "gb18030", "big5", "cp1252")
 
 _CHAPTER_PATTERNS = (
-    re.compile(r"^第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节節回卷篇部集话話].{0,40}$"),
-    re.compile(r"^(?:Chapter|CHAPTER|Ch\.|chapter)\s*\d+.{0,40}$"),
+    # "第一章" / "第1章 开端" / "第 12 节" / "第三卷"
+    # A separator must follow the marker, otherwise prose such as
+    # "第一章说的是另一个故事…" would be mistaken for a heading.
+    re.compile(
+        r"^第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节節回卷篇部集话話]"
+        r"(?:[\s、：:·\-—]+[^\u3002\uff01\uff1f\uff0c\uff1b]{1,24})?$"
+    ),
+    re.compile(r"^(?:Chapter|CHAPTER|Ch\.|chapter)\s*\d+[\s：:.\-]{0,3}[^\u3002\uff01\uff1f\uff0c]{0,24}$"),
     re.compile(r"^(?:序章|序言|自序|序|前言|引子|楔子|后记|後記|尾声|尾聲|终章|終章|番外.{0,20}|外传.{0,20})$"),
+    # Roman-numeral section headings, e.g. "I.粘土中的恐怖" / "II. 风暴中的过客"
+    re.compile(r"^[IVXLC]{1,6}\s*[.、．]\s*[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9 ·\-]{0,18}$"),
+    # Chinese-numeral headings, e.g. "一、初见"
+    re.compile(r"^[一二三四五六七八九十百]+\s*[、.．]\s*[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9 ·\-]{0,18}$"),
 )
 _CHAPTER_MAX_LEN = 60
+# A heading-less work stays one chapter; only split when it is really huge, so
+# the TOC does not fill up with generic part names.
+_MAX_CHARS_PER_PART = 120_000
 
 
 def read_text_file(path: Path) -> str:
@@ -699,16 +712,25 @@ def is_chapter_heading(line: str) -> bool:
     return any(pattern.match(text) for pattern in _CHAPTER_PATTERNS)
 
 
-def split_text_chapters(text: str, *, fallback_size: int = 8000) -> list[tuple[str, list[str]]]:
+def split_text_chapters(
+    text: str,
+    *,
+    book_title: str = "",
+    max_chars_per_part: int = _MAX_CHARS_PER_PART,
+) -> list[tuple[str, list[str]]]:
     """Split a novel into (chapter title, paragraphs).
 
-    Falls back to fixed-size parts when no headings are recognisable, so a plain
-    TXT still converts into something readable.
+    When the file carries no recognisable headings the whole work becomes ONE
+    chapter named after the book — not a run of generic "第 N 部分" entries,
+    which used to make a merged collection's TOC a wall of identical names.
+    Only a very long heading-less work is split, and its parts are named
+    ``书名（1/N）`` so they stay distinguishable.
     """
     lines = text.split("\n")
     chapters: list[tuple[str, list[str]]] = []
     current_title = ""
     buffer: list[str] = []
+    found_heading = False
 
     def flush() -> None:
         if not buffer:
@@ -716,33 +738,57 @@ def split_text_chapters(text: str, *, fallback_size: int = 8000) -> list[tuple[s
         paras = [p.strip() for p in "\n".join(buffer).split("\n") if p.strip()]
         if not paras:
             return
-        title = current_title or ("正文" if not chapters else f"第 {len(chapters) + 1} 部分")
-        chapters.append((title, paras))
+        # Text before the first heading (or the whole file) is titled with the
+        # book name when it has no heading of its own.
+        chapters.append((current_title or book_title or "正文", paras))
 
     for line in lines:
         if is_chapter_heading(line):
             flush()
             buffer = []
+            found_heading = True
             current_title = line.strip()
         else:
             buffer.append(line)
     flush()
 
-    if len(chapters) <= 1:
-        # No usable headings: chunk the text so the book still has a TOC.
-        stripped = [p.strip() for p in text.split("\n") if p.strip()]
-        if not stripped:
-            return []
-        chunks: list[tuple[str, list[str]]] = []
-        for start in range(0, len(stripped), 400):
-            chunks.append((f"第 {len(chunks) + 1} 部分", stripped[start:start + 400]))
-        return chunks
-    return chapters
+    if found_heading:
+        # Text before the first heading is a preface (title page / epigraph /
+        # translator note), not the book itself — naming it after the book would
+        # repeat the book's own TOC entry.
+        if len(chapters) > 1 and chapters[0][0] == (book_title or "正文"):
+            chapters[0] = ("前言", chapters[0][1])
+        return chapters
+
+    # No headings at all.
+    stripped = [p.strip() for p in text.split("\n") if p.strip()]
+    if not stripped:
+        return []
+    label = book_title or "正文"
+    if sum(len(p) for p in stripped) <= max_chars_per_part:
+        return [(label, stripped)]
+
+    parts: list[list[str]] = []
+    chunk: list[str] = []
+    size = 0
+    for para in stripped:
+        chunk.append(para)
+        size += len(para)
+        if size >= max_chars_per_part:
+            parts.append(chunk)
+            chunk = []
+            size = 0
+    if chunk:
+        parts.append(chunk)
+    total = len(parts)
+    return [(f"{label}（{i}/{total}）", c) for i, c in enumerate(parts, 1)]
 
 
 def read_txt_source(path: Path) -> BookSource:
     path = Path(path)
-    chapters = split_text_chapters(read_text_file(path))
+    # The file name is the book title, and is used to title chapters that have
+    # no heading of their own.
+    chapters = split_text_chapters(read_text_file(path), book_title=path.stem)
     if not chapters:
         raise TranscodeError(f"{path.name} 里没有可用的文本")
     toc = [SourceToc(title, index) for index, (title, _) in enumerate(chapters)]
@@ -1072,10 +1118,16 @@ def merge_sources(
             # the page each entry actually referred to.
             if keep_source_toc:
                 if src.chapters:
-                    children = [
-                        EpubTocEntry(ct, f"page{first_doc + i:04d}.xhtml")
-                        for i, (ct, _p) in enumerate(src.chapters)
-                    ]
+                    # A heading-less book is one chapter named after the book;
+                    # the book's own TOC entry already says that, so do not
+                    # repeat it as a child.
+                    if len(src.chapters) == 1 and src.chapters[0][0] == src.title:
+                        children = []
+                    else:
+                        children = [
+                            EpubTocEntry(ct, f"page{first_doc + i:04d}.xhtml")
+                            for i, (ct, _p) in enumerate(src.chapters)
+                        ]
                 elif src.toc:
                     count = len(src.images)
                     children = [
