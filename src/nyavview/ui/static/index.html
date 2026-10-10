@@ -140,6 +140,7 @@
             <button class="sub-tab active" data-sub="cv">本地文件 → MP4</button>
             <button class="sub-tab" data-sub="bili">B站缓存 → MP4</button>
             <button class="sub-tab" data-sub="ebook">图片 → 电子书</button>
+            <button class="sub-tab" data-sub="merge">电子书合集 / TXT</button>
           </div>
 
           <!-- local file form -->
@@ -237,6 +238,12 @@
               <label class="field-label" for="ebookTitle">书名</label>
               <input id="ebookTitle" class="select select-sm naming-input" type="text"
                      placeholder="默认用文件夹名" spellcheck="false" />
+              <label class="field-label" for="ebookTemplate">命名模板</label>
+              <input id="ebookTemplate" class="select select-sm naming-input" type="text"
+                     placeholder="留空自动" spellcheck="false"
+                     title="可用占位符：{title} 书名、{folder} 文件夹名、{index} 序号、{index2}、{index3}、{total} 总数、{date} 日期" />
+              <span class="hint-inline" id="ebookTemplateHelp"
+                    title="可用占位符：{title} 书名、{folder} 文件夹名、{index} 序号、{index2}、{index3}、{total} 总数、{date} 日期">占位符 ⓘ</span>
             </div>
             <div class="option-row">
               <label class="field-label" for="ebookAuthor">作者</label>
@@ -252,6 +259,7 @@
               <button id="ebookDirPick" class="btn btn-ghost path-pick">选择目录</button>
             </div>
             <div class="path-line" id="ebookDirPath">未选择（使用默认目录）</div>
+            <div class="name-preview" id="ebookNamePreview">将生成：—</div>
 
             <div id="ebookListWrap" style="display:none">
               <div class="ebook-list-head">
@@ -264,6 +272,58 @@
             </div>
 
             <button id="ebookStart" class="btn btn-primary btn-block">开始生成电子书</button>
+          </div>
+
+          <!-- merge ebooks / txt into one collection -->
+          <div id="sub-merge" class="sub-panel">
+            <div id="mergeDropZone" class="drop-zone drop-zone-slim">把 EPUB / CBZ / PDF / TXT 文件或文件夹拖到这里（可多选）</div>
+            <div class="option-row">
+              <button id="mergePickFiles" class="btn btn-ghost">添加文件</button>
+              <button id="mergePickFolder" class="btn btn-ghost btn-sm">添加文件夹</button>
+              <span class="path-line-inline" id="mergeHint">未选择文件</span>
+              <span class="spacer"></span>
+              <button id="mergeClear" class="btn btn-ghost btn-sm">清空</button>
+            </div>
+            <div id="mergeListWrap" style="display:none">
+              <div class="ebook-list-head">
+                <span id="mergeCount" class="ebook-count">0 本</span>
+                <span class="hint-line-inline">拖 ⠿ 或点 ▲▼ 调整顺序，顺序即合并后的章节顺序</span>
+                <span class="spacer"></span>
+                <span id="mergeSummary" class="hint-line-inline"></span>
+              </div>
+              <div id="mergeList" class="merge-list"></div>
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="mergeFormat">输出格式</label>
+              <select id="mergeFormat" class="select select-sm">
+                <option value="epub" selected>EPUB（带目录，推荐）</option>
+                <option value="pdf">PDF（书签目录）</option>
+                <option value="cbz">CBZ（无目录）</option>
+              </select>
+              <label class="field-label" for="mergeTitle">合集名</label>
+              <input id="mergeTitle" class="select select-sm naming-input" type="text"
+                     placeholder="合集" spellcheck="false" />
+              <label class="toggle">
+                <input type="checkbox" id="mergeKeepToc" checked />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">保留原书目录</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="mergeOverwrite" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">覆盖</span>
+              </label>
+            </div>
+            <div class="option-row">
+              <label class="field-label" for="mergeAuthor">作者</label>
+              <input id="mergeAuthor" class="select select-sm naming-input" type="text"
+                     placeholder="可选" spellcheck="false" />
+              <span class="spacer"></span>
+              <label class="field-label" for="mergeDir">输出到</label>
+              <button id="mergeDirPick" class="btn btn-ghost path-pick">选择目录</button>
+            </div>
+            <div class="path-line" id="mergeDirPath">未选择（使用默认目录）</div>
+            <button id="mergeStart" class="btn btn-primary btn-block">合并为一本电子书</button>
           </div>
         </div>
       </section>

@@ -290,6 +290,28 @@ class Api:
     def pick_output_dir(self, title: str = "选择输出目录") -> Optional[str]:
         return self.pick_folder(title)
 
+    def pick_books(self, title: str = "选择电子书 / TXT（可多选）") -> list[str]:
+        """Multi-select picker for the merge feature."""
+        if self._window is None:
+            return []
+        result = self._window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            allow_multiple=True,
+            file_types=(
+                "电子书与文本 (*.epub;*.cbz;*.pdf;*.txt;*.md)",
+                "EPUB (*.epub)",
+                "CBZ 漫画包 (*.cbz)",
+                "PDF (*.pdf)",
+                "文本 (*.txt;*.md)",
+                "所有文件 (*.*)",
+            ),
+        )
+        if not result:
+            return []
+        if isinstance(result, str):
+            return [result]
+        return [str(p) for p in result]
+
     # -------------------------------------------------------------- ebook
 
     def scan_images(self, folder: str, mode: str = "merge") -> dict[str, Any]:
@@ -341,6 +363,75 @@ class Api:
             return {"ok": False, "error": "请先选择图片文件夹"}
         try:
             job_id = self._manager.submit_ebook(source, options or {})
+            return {"ok": True, "jobId": job_id}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def ebook_names(self, groups: list[dict[str, Any]], options: dict[str, Any]) -> dict[str, Any]:
+        """Exact output filenames for the current settings (UI live preview)."""
+        from nyavview.engines.ebook import plan_names
+
+        options = options or {}
+        try:
+            target_dir = options.get("destination") or str(self._manager.settings.converted_dir)
+            planned = plan_names(
+                [g for g in (groups or []) if g.get("images")],
+                fmt=(options.get("format") or "cbz").lower(),
+                title=options.get("title") or "",
+                name_template=options.get("nameTemplate") or "",
+                target_dir=Path(str(target_dir)),
+                overwrite=bool(options.get("overwrite")),
+            )
+            return {"ok": True, "names": planned}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def inspect_books(self, files: list[str]) -> dict[str, Any]:
+        """Describe the files chosen for merging (title / kind / size)."""
+        from nyavview.engines.ebook import read_book_source
+
+        items = []
+        for raw in files or []:
+            path = Path(str(raw))
+            entry: dict[str, Any] = {"path": str(path), "name": path.name}
+            try:
+                source = read_book_source(path)
+                entry.update(
+                    {
+                        "ok": True,
+                        "title": source.title,
+                        "kind": source.kind,
+                        "pages": len(source.images),
+                        "chapters": len(source.chapters),
+                        "toc": len(source.toc),
+                    }
+                )
+            except Exception as exc:
+                entry.update({"ok": False, "error": str(exc)})
+            items.append(entry)
+        return {"ok": True, "items": items}
+
+    def list_books(self, folder: str) -> dict[str, Any]:
+        """List mergeable book/txt files inside a folder (recursive, sorted)."""
+        from nyavview.engines.ebook import BOOK_EXTS, natural_key
+
+        root = Path(str(folder or ""))
+        if not root.is_dir():
+            return {"ok": False, "error": f"不是文件夹：{folder}"}
+        files = [
+            p for p in root.rglob("*")
+            if p.is_file() and p.suffix.lower() in BOOK_EXTS
+        ]
+        files.sort(key=lambda p: natural_key(str(p.relative_to(root))))
+        if not files:
+            return {"ok": False, "error": "该文件夹里没有 EPUB / CBZ / PDF / TXT 文件"}
+        return {"ok": True, "files": [str(p) for p in files]}
+
+    def start_merge(self, files: list[str], options: dict[str, Any]) -> dict[str, Any]:
+        if not files:
+            return {"ok": False, "error": "请先添加要合并的电子书"}
+        try:
+            job_id = self._manager.submit_merge([str(f) for f in files], options or {})
             return {"ok": True, "jobId": job_id}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}

@@ -135,7 +135,12 @@ class JobManager:
         job.eta = event.eta
         if event.detail:
             job.detail = event.detail
-        self._emit({"jobId": job.id, "type": "progress", **event.to_dict()})
+        payload = event.to_dict()
+        # The engine reports its own flavour of progress (both the ebook and the
+        # merge jobs run on EbookBuilder, which always says "ebook"). The badge
+        # must show the JOB's kind, so the event carries that instead.
+        payload["kind"] = job.kind
+        self._emit({"jobId": job.id, "type": "progress", **payload})
 
     def _finish(self, job: Job, *, error: Optional[str] = None, cancelled: bool = False) -> None:
         if cancelled:
@@ -180,6 +185,13 @@ class JobManager:
         job = self._register("ebook", str(label))
         assert self._loop is not None
         job.task = asyncio.run_coroutine_threadsafe(self._run_ebook(job, source, options), self._loop)
+        return job.id
+
+    def submit_merge(self, files: list[str], options: dict[str, Any]) -> str:
+        label = options.get("title") or f"{len(files)} 本合集"
+        job = self._register("merge", str(label))
+        assert self._loop is not None
+        job.task = asyncio.run_coroutine_threadsafe(self._run_merge(job, files, options), self._loop)
         return job.id
 
     # ---------------------------------------------------------------- tasks
@@ -344,6 +356,7 @@ class JobManager:
                 author=options.get("author") or "",
                 overwrite=bool(options.get("overwrite")),
                 comic_info=bool(options.get("comicInfo", True)),
+                name_template=options.get("nameTemplate") or "",
             )
             job.output = outputs[0] if outputs else None
             if len(outputs) > 1:
@@ -351,7 +364,7 @@ class JobManager:
                     {
                         "jobId": job.id,
                         "type": "progress",
-                        "kind": "ebook",
+                        "kind": job.kind,
                         "status": "running",
                         "progress": 1.0,
                         "percent": 100.0,
@@ -360,6 +373,35 @@ class JobManager:
                         "detail": "共生成 " + str(len(outputs)) + " 个文件：" + "、".join(p.name for p in outputs),
                     }
                 )
+            self._finish(job)
+        except asyncio.CancelledError:
+            self._finish(job, cancelled=True)
+            raise
+        except CanceledError:
+            self._finish(job, cancelled=True)
+        except NyaViewError as exc:
+            self._finish(job, error=str(exc))
+        except Exception as exc:
+            self._finish(job, error=f"{type(exc).__name__}: {exc}")
+
+    async def _run_merge(self, job: Job, files: list[str], options: dict[str, Any]) -> None:
+        settings = self._job_settings(options)
+        target_dir = Path(options.get("destination") or settings.converted_dir)
+        try:
+            job.status = JobStatus.RUNNING
+            self._emit({"jobId": job.id, "type": "status", "status": "running"})
+            engine = EbookBuilder(settings, on_progress=lambda e: self._progress(job, e))
+            job.engine = engine
+            outputs = await engine.merge(
+                [Path(f) for f in (files or [])],
+                target_dir,
+                fmt=options.get("format") or "epub",
+                title=options.get("title") or "",
+                author=options.get("author") or "",
+                overwrite=bool(options.get("overwrite")),
+                keep_source_toc=bool(options.get("keepSourceToc", True)),
+            )
+            job.output = outputs[0] if outputs else None
             self._finish(job)
         except asyncio.CancelledError:
             self._finish(job, cancelled=True)

@@ -26,6 +26,8 @@ import re
 import struct
 import uuid
 import zipfile
+from dataclasses import dataclass, field
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Optional, Sequence
 from xml.sax.saxutils import escape
@@ -44,6 +46,21 @@ OutputMode = Literal["merge", "per_folder"]
 IMAGE_EXTS = frozenset(
     {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif", ".tif", ".tiff"}
 )
+
+# Sources accepted by the "merge into one book" feature.
+BOOK_EXTS = frozenset({".epub", ".cbz", ".pdf", ".txt"})
+
+_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".avif": "image/avif",
+}
 
 # JPEG quality used only when an image must be normalised (non-JPEG source or
 # EXIF rotation). 95 + 4:4:4 keeps line art clean.
@@ -181,78 +198,203 @@ def _pdf_escape(value: str) -> str:
     return value.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
 
 
+class _PdfWriter:
+    """Tiny PDF object collector so objects can be added in any order."""
+
+    def __init__(self) -> None:
+        self.objs: dict[int, bytes] = {}
+        self.next_id = 1
+
+    def reserve(self) -> int:
+        num = self.next_id
+        self.next_id += 1
+        return num
+
+    def add(self, body: bytes) -> int:
+        num = self.reserve()
+        self.objs[num] = body
+        return num
+
+    def set(self, num: int, body: bytes) -> None:
+        self.objs[num] = body
+
+    def write(self, target: Path, *, info_id: int = 0) -> Path:
+        out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        offsets: dict[int, int] = {}
+        for num in sorted(self.objs):
+            offsets[num] = len(out)
+            out += f"{num} 0 obj\n".encode() + self.objs[num] + b"\nendobj\n"
+        xref_pos = len(out)
+        max_id = max(self.objs)
+        out += f"xref\n0 {max_id + 1}\n".encode() + b"0000000000 65535 f \n"
+        for num in range(1, max_id + 1):
+            out += (
+                f"{offsets[num]:010d} 00000 n \n".encode()
+                if num in offsets
+                else b"0000000000 65535 f \n"
+            )
+        info_ref = f" /Info {info_id} 0 R" if info_id else ""
+        out += (
+            f"trailer\n<< /Size {max_id + 1} /Root 1 0 R{info_ref} >>\n"
+            f"startxref\n{xref_pos}\n%%EOF\n"
+        ).encode()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bytes(out))
+        return target
+
+
+def _write_pdf(
+    payloads: Sequence[tuple[bytes, int, int, str, str]],
+    target: Path,
+    *,
+    title: str = "",
+    author: str = "",
+    outline: Sequence[SourceToc] = (),
+) -> Path:
+    """Write a PDF from (data, width, height, colours, filter) payloads.
+
+    ``outline`` becomes the PDF bookmark tree, which is how a PDF carries a
+    table of contents.
+    """
+    if not payloads:
+        raise TranscodeError("没有可写入的页面")
+    pdf = _PdfWriter()
+    catalog_id = pdf.reserve()  # 1
+    pages_id = pdf.reserve()  # 2
+    info_id = pdf.reserve()  # 3
+    outlines_id = pdf.reserve() if outline else 0
+
+    page_ids: list[int] = []
+    for data, w, h, colour, flt in payloads:
+        page_id = pdf.reserve()
+        image_id = pdf.reserve()
+        content_id = pdf.reserve()
+        page_ids.append(page_id)
+        pdf.set(
+            page_id,
+            (
+                f"<< /Type /Page /Parent {pages_id} 0 R /MediaBox [0 0 {w} {h}] "
+                f"/Resources << /XObject << /Im0 {image_id} 0 R >> >> "
+                f"/Contents {content_id} 0 R >>"
+            ).encode(),
+        )
+        pdf.set(
+            image_id,
+            (
+                f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} "
+                f"/ColorSpace {colour} /BitsPerComponent 8 /Filter {flt} "
+                f"/Length {len(data)} >>\nstream\n"
+            ).encode()
+            + data
+            + b"\nendstream",
+        )
+        content = f"q {w} 0 0 {h} 0 0 cm /Im0 Do Q".encode()
+        pdf.set(content_id, f"<< /Length {len(content)} >>\nstream\n".encode() + content + b"\nendstream")
+
+    kids = " ".join(f"{pid} 0 R" for pid in page_ids)
+    pdf.set(pages_id, f"<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>".encode())
+
+    def build_outline(items: Sequence[SourceToc], parent_id: int) -> tuple[int, int, int]:
+        """Returns (first_id, last_id, total_count)."""
+        ids: list[int] = []
+        counts: list[int] = []
+        for item in items:
+            node_id = pdf.reserve()
+            ids.append(node_id)
+            child_first = child_last = child_count = 0
+            if item.children:
+                child_first, child_last, child_count = build_outline(item.children, node_id)
+            page = page_ids[min(max(item.page_index, 0), len(page_ids) - 1)]
+            parts = [
+                f"/Title ({_pdf_escape(item.title)})",
+                f"/Parent {parent_id} 0 R",
+                f"/Dest [{page} 0 R /Fit]",
+            ]
+            if child_first:
+                parts += [f"/First {child_first} 0 R", f"/Last {child_last} 0 R"]
+            parts.append(f"/Count {child_count if child_count else 0}")
+            if len(ids) > 1:
+                parts.append(f"/Prev {ids[-2]} 0 R")
+            pdf.set(node_id, ("<< " + " ".join(parts) + " >>").encode())
+            counts.append(child_count)
+        # Link /Next now that every sibling id is known.
+        for pos, node_id in enumerate(ids):
+            body = pdf.objs[node_id]
+            if pos + 1 < len(ids):
+                body = body[:-3] + f" /Next {ids[pos + 1]} 0 R >>".encode()
+                pdf.set(node_id, body)
+        total = len(ids) + sum(counts)
+        return (ids[0], ids[-1], total) if ids else (0, 0, 0)
+
+    outline_ref = b""
+    if outline:
+        first, last, count = build_outline(outline, outlines_id)
+        pdf.set(
+            outlines_id,
+            f"<< /Type /Outlines /First {first} 0 R /Last {last} 0 R /Count {count} >>".encode(),
+        )
+        outline_ref = f" /Outlines {outlines_id} 0 R".encode()
+
+    pdf.set(catalog_id, b"<< /Type /Catalog /Pages " + str(pages_id).encode() + b" 0 R" + outline_ref + b" >>")
+    info = f"<< /Title ({_pdf_escape(title)}) /Producer (NyaView)"
+    if author:
+        info += f" /Author ({_pdf_escape(author)})"
+    pdf.set(info_id, (info + " >>").encode())
+    return pdf.write(target, info_id=info_id)
+
+
+def _pdf_payload_for_file(path: Path) -> tuple[bytes, int, int, str, str]:
+    """Embed a page losslessly when it is already an upright JPEG."""
+    suffix = path.suffix.lower()
+    if suffix in (".jpg", ".jpeg") and not _needs_rotation(path):
+        data = path.read_bytes()
+        w, h, comps = _jpeg_dimensions(data)
+        colour = "/DeviceGray" if comps == 1 else ("/DeviceCMYK" if comps == 4 else "/DeviceRGB")
+        return data, w, h, colour, "/DCTDecode"
+    data, w, h = _normalise_to_jpeg(path)
+    return data, w, h, "/DeviceRGB", "/DCTDecode"
+
+
 def build_pdf(pages: Sequence[Path], target: Path, *, title: str = "") -> Path:
     """Write a minimal, valid PDF embedding each page losslessly when possible."""
     if not pages:
         raise TranscodeError("没有可写入的页面")
+    payloads = [_pdf_payload_for_file(Path(page)) for page in pages]
+    return _write_pdf(payloads, target, title=title)
 
-    objs: dict[int, bytes] = {}
-    page_ids: list[int] = []
-    next_id = 3  # 1 = Catalog, 2 = Pages
-    payloads: list[tuple[Path, bytes, int, int, str]] = []
 
-    # First pass: normalise every page into embeddable bytes (no re-encode for
-    # upright JPEG, which is the overwhelmingly common comic page).
-    for path in pages:
-        suffix = path.suffix.lower()
-        if suffix in (".jpg", ".jpeg") and not _needs_rotation(path):
-            data = path.read_bytes()
-            w, h, comps = _jpeg_dimensions(data)
-            colour = "/DeviceGray" if comps == 1 else ("/DeviceCMYK" if comps == 4 else "/DeviceRGB")
-            payloads.append((path, data, w, h, f"/DCTDecode {colour}"))
+def build_pdf_from_images(
+    images: Sequence[tuple[str, bytes, int, int]],
+    target: Path,
+    *,
+    title: str = "",
+    author: str = "",
+    outline: Sequence[SourceToc] = (),
+) -> Path:
+    """Build a PDF from in-memory images, with an optional bookmark tree."""
+    payloads: list[tuple[bytes, int, int, str, str]] = []
+    for _name, data, w, h, in images:
+        if data.startswith(b"\xff\xd8"):
+            try:
+                real_w, real_h, comps = _jpeg_dimensions(data)
+                w, h = real_w, real_h
+                colour = "/DeviceGray" if comps == 1 else (
+                    "/DeviceCMYK" if comps == 4 else "/DeviceRGB"
+                )
+            except Exception:
+                colour = "/DeviceRGB"
         else:
-            data, w, h = _normalise_to_jpeg(path)
-            payloads.append((path, data, w, h, "/DCTDecode /DeviceRGB"))
+            from PIL import Image
 
-    for _path, _data, w, h, _flt in payloads:
-        page_ids.append(next_id)
-        next_id += 3
-
-    kids = " ".join(f"{pid} 0 R" for pid in page_ids)
-    objs[1] = b"<< /Type /Catalog /Pages 2 0 R >>"
-    objs[2] = f"<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>".encode()
-
-    for idx, (_path, data, w, h, flt) in enumerate(payloads):
-        pid = page_ids[idx]
-        image_id, content_id = pid + 1, pid + 2
-        objs[pid] = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] "
-            f"/Resources << /XObject << /Im0 {image_id} 0 R >> >> "
-            f"/Contents {content_id} 0 R >>"
-        ).encode()
-        objs[image_id] = (
-            f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} "
-            f"/ColorSpace {flt.split()[-1]} /BitsPerComponent 8 /Filter {flt.split()[0]} "
-            f"/Length {len(data)} >>\nstream\n"
-        ).encode() + data + b"\nendstream"
-        content = f"q {w} 0 0 {h} 0 0 cm /Im0 Do Q".encode()
-        objs[content_id] = f"<< /Length {len(content)} >>\nstream\n".encode() + content + b"\nendstream"
-
-    info_id = next_id
-    objs[info_id] = f"<< /Title ({_pdf_escape(title)}) /Producer (NyaView) >>".encode()
-
-    out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-    offsets: dict[int, int] = {}
-    for num in sorted(objs):
-        offsets[num] = len(out)
-        out += f"{num} 0 obj\n".encode() + objs[num] + b"\nendobj\n"
-    xref_pos = len(out)
-    max_id = max(objs)
-    out += f"xref\n0 {max_id + 1}\n".encode() + b"0000000000 65535 f \n"
-    for num in range(1, max_id + 1):
-        out += (
-            f"{offsets[num]:010d} 00000 n \n".encode()
-            if num in offsets
-            else b"0000000000 65535 f \n"
-        )
-    out += (
-        f"trailer\n<< /Size {max_id + 1} /Root 1 0 R /Info {info_id} 0 R >>\n"
-        f"startxref\n{xref_pos}\n%%EOF\n"
-    ).encode()
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(bytes(out))
-    return target
+            with Image.open(io.BytesIO(data)) as im:
+                rgb = im.convert("RGB")
+                buf = io.BytesIO()
+                rgb.save(buf, format="JPEG", quality=_NORMALISE_QUALITY, subsampling=0)
+                data = buf.getvalue()
+                w, h = rgb.size
+            colour = "/DeviceRGB"
+        payloads.append((data, w, h, colour, "/DCTDecode"))
+    return _write_pdf(payloads, target, title=title, author=author, outline=outline)
 
 
 # ------------------------------------------------------------------ CBZ writer
@@ -299,32 +441,99 @@ _EPUB_CONTAINER = (
     'media-type="application/oebps-package+xml"/></rootfiles></container>'
 )
 
+# Fixed-layout page. The image goes inside an <svg> with an exact viewBox so the
+# document's intrinsic size is exactly one page — a reading system that paginates
+# reflowably then cannot split it into a real page plus a blank one.
 _EPUB_PAGE = (
     '<?xml version="1.0" encoding="utf-8"?>'
     '<!DOCTYPE html>'
-    '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
-    "<head><title>第 {index} 页</title>"
+    '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" '
+    'xmlns:xlink="http://www.w3.org/1999/xlink" lang="zh">'
+    "<head><title>{title}</title><meta charset=\"utf-8\"/>"
     '<meta name="viewport" content="width={w}, height={h}"/>'
-    "<style>html,body{{margin:0;padding:0;height:100%;background:#000;}}"
-    "img{{width:100%;height:100%;object-fit:contain;}}</style></head>"
-    '<body><div><img src="images/{name}" alt="第 {index} 页"/></div></body></html>'
+    "<style>html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;"
+    "background:#fff;}}svg{{display:block;width:100%;height:100%;}}</style></head>"
+    '<body><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+    'viewBox="0 0 {w} {h}" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">'
+    '<image xlink:href="{src}" width="{w}" height="{h}"/></svg></body></html>'
+)
+
+_EPUB_TEXT_CSS = (
+    "html,body{margin:0;padding:0;}"
+    "body{line-height:1.75;font-family:serif;padding:0.6em 0.9em;}"
+    "h1,h2{font-size:1.25em;margin:1.1em 0 0.7em;line-height:1.4;}"
+    "h2{font-size:1.1em;}"
+    "p{margin:0 0 0.85em;text-indent:2em;}"
+    "p.no-indent{text-indent:0;}"
+)
+
+_EPUB_TEXT_PAGE = (
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<!DOCTYPE html>'
+    '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="zh">'
+    "<head><title>{title}</title><meta charset=\"utf-8\"/>"
+    "<style>{css}</style></head><body>{body}</body></html>"
 )
 
 
-def build_epub(
-    pages: Sequence[Path],
+@dataclass
+class EpubDoc:
+    """One spine document (a fixed-layout page or a reflowable chapter)."""
+
+    title: str
+    body: str  # the complete XHTML file
+    layout: str = "pre-paginated"  # or "reflowable"
+    assets: list[tuple[str, bytes, str]] = field(default_factory=list)  # href, data, media
+    cover: bool = False
+
+
+@dataclass
+class EpubTocEntry:
+    title: str
+    href: str
+    children: list["EpubTocEntry"] = field(default_factory=list)
+
+
+def _image_media_type(name: str) -> str:
+    return _MEDIA_TYPES.get(Path(name).suffix.lower(), "image/jpeg")
+
+
+def _toc_html(entries: Sequence[EpubTocEntry]) -> str:
+    if not entries:
+        return ""
+    items = "".join(
+        f'<li><a href="{escape(e.href)}">{escape(e.title)}</a>{_toc_html(e.children)}</li>'
+        for e in entries
+    )
+    return f"<ol>{items}</ol>"
+
+
+def write_epub(
     target: Path,
     *,
-    title: str = "",
+    title: str,
     author: str = "",
+    language: str = "zh",
+    docs: Sequence[EpubDoc],
+    toc: Sequence[EpubTocEntry] = (),
 ) -> Path:
-    """Write a fixed-layout (pre-paginated) EPUB3 suitable for comics."""
-    if not pages:
-        raise TranscodeError("没有可写入的页面")
+    """Write an EPUB3 package from pre-built spine documents.
+
+    ``rendition:*`` metadata must use ``property=`` (not ``name=``) for reading
+    systems to honour it — with the EPUB2-style ``name=`` form the book is
+    treated as reflowable and a paginating reader splits each page, producing
+    the blank pages users saw.
+    """
+    if not docs:
+        raise TranscodeError("没有可写入的内容")
     book_title = title or target.stem
     identifier = f"urn:uuid:{uuid.uuid4()}"
+    # The package default; each itemref may override it.
+    package_layout = "reflowable" if all(d.layout == "reflowable" for d in docs) else "pre-paginated"
+
     manifest: list[str] = []
     spine: list[str] = []
+    cover_id: Optional[str] = None
 
     target.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(target, "w") as zf:
@@ -332,30 +541,33 @@ def build_epub(
         zf.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", zipfile.ZIP_STORED)
         zf.writestr("META-INF/container.xml", _EPUB_CONTAINER)
 
-        for index, page in enumerate(pages, 1):
-            name = f"{index:04d}{page.suffix.lower()}"
-            media_type = "image/jpeg" if name.endswith((".jpg", ".jpeg")) else f"image/{name.rsplit('.', 1)[-1]}"
-            zf.write(page, f"OEBPS/images/{name}")
-            manifest.append(f'<item id="img{index}" href="images/{name}" media-type="{media_type}"/>')
-            try:
-                width, height = _image_size(page)
-            except Exception:
-                width, height = 1200, 1800
-            zf.writestr(
-                f"OEBPS/page{index:04d}.xhtml",
-                _EPUB_PAGE.format(index=index, name=name, w=width, h=height),
-            )
+        for index, doc in enumerate(docs, 1):
+            for asset_no, (href, data, media) in enumerate(doc.assets, 1):
+                zf.writestr(f"OEBPS/{href}", data)
+                asset_id = f"a{index:04d}_{asset_no}"
+                props = ""
+                if doc.cover and asset_no == 1 and media.startswith("image/"):
+                    props = ' properties="cover-image"'
+                    cover_id = asset_id
+                manifest.append(
+                    f'<item id="{asset_id}" href="{escape(href)}" media-type="{media}"{props}/>'
+                )
+            page_name = f"page{index:04d}.xhtml"
+            zf.writestr(f"OEBPS/{page_name}", doc.body)
             manifest.append(
-                f'<item id="page{index}" href="page{index:04d}.xhtml" '
+                f'<item id="page{index:04d}" href="{page_name}" '
                 'media-type="application/xhtml+xml"/>'
             )
-            spine.append(f'<itemref idref="page{index}"/>')
+            props = (
+                ""
+                if doc.layout == "reflowable"
+                else ' properties="rendition:layout-pre-paginated"'
+            )
+            spine.append(f'<itemref idref="page{index:04d}"{props}/>')
 
-        # Cover = first page (also referenced explicitly for readers).
-        cover_meta = ""
-        if pages:
-            cover_meta = '<meta name="cover" content="img1"/>'
-
+        creator = f"<dc:creator>{escape(author)}</dc:creator>" if author else ""
+        cover_meta = f'<meta name="cover" content="{cover_id}"/>' if cover_id else ""
+        modified = "2026-01-01T00:00:00Z"
         opf = (
             '<?xml version="1.0" encoding="utf-8"?>'
             '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
@@ -364,13 +576,14 @@ def build_epub(
             '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
             f'<dc:identifier id="bookid">{identifier}</dc:identifier>'
             f"<dc:title>{escape(book_title)}</dc:title>"
-            "<dc:language>zh</dc:language>"
-            f"<dc:creator>{escape(author)}</dc:creator>"
-            "<dc:modified>2026-01-01T00:00:00Z</dc:modified>"
-            '<meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>'
-            '<meta name="rendition:layout">pre-paginated</meta>'
-            '<meta name="rendition:orientation">auto</meta>'
-            '<meta name="rendition:spread">auto</meta>'
+            f"<dc:language>{escape(language)}</dc:language>"
+            f"{creator}"
+            f'<meta property="dcterms:modified">{modified}</meta>'
+            f'<meta property="rendition:layout">{package_layout}</meta>'
+            '<meta property="rendition:orientation">auto</meta>'
+            # "none": never force two-page spreads (that makes readers insert
+            # blank pages to align them).
+            '<meta property="rendition:spread">none</meta>'
             f"{cover_meta}"
             "</metadata>"
             f'<manifest>{"".join(manifest)}'
@@ -384,16 +597,605 @@ def build_epub(
             "OEBPS/nav.xhtml",
             '<?xml version="1.0" encoding="utf-8"?>'
             '<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" '
-            'xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title>'
+            'xmlns:epub="http://www.idpf.org/2007/ops" lang="zh"><head><title>目录</title>'
             '<meta charset="utf-8"/></head><body>'
-            f'<nav epub:type="toc"><h1>{escape(book_title)}</h1><ol>'
-            f'<li><a href="page0001.xhtml">{escape(book_title)}</a></li>'
-            "</ol></nav></body></html>",
+            '<nav epub:type="toc" id="toc">'
+            f"<h1>{escape(book_title)}</h1>{_toc_html(toc)}"
+            "</nav></body></html>",
         )
     return target
 
 
+def build_epub(
+    pages: Sequence[Path],
+    target: Path,
+    *,
+    title: str = "",
+    author: str = "",
+    toc: Optional[Sequence[EpubTocEntry]] = None,
+) -> Path:
+    """Fixed-layout (pre-paginated) EPUB3 for a comic: one image per page."""
+    if not pages:
+        raise TranscodeError("没有可写入的页面")
+    book_title = title or target.stem
+    docs: list[EpubDoc] = []
+    for index, page in enumerate(pages, 1):
+        name = f"{index:04d}{page.suffix.lower()}"
+        try:
+            width, height = _image_size(page)
+        except Exception:
+            width, height = 1200, 1800
+        page_title = f"第 {index} 页"
+        docs.append(
+            EpubDoc(
+                title=page_title,
+                body=_EPUB_PAGE.format(
+                    title=page_title, w=width, h=height, src=f"images/{name}"
+                ),
+                assets=[(f"images/{name}", page.read_bytes(), _image_media_type(name))],
+                cover=(index == 1),
+            )
+        )
+    if toc is None:
+        toc = [EpubTocEntry(book_title, "page0001.xhtml")]
+    return write_epub(target, title=book_title, author=author, docs=docs, toc=toc)
+
+
+# ------------------------------------------------------- source book readers
+
+
+@dataclass
+class SourceToc:
+    """A table-of-contents entry of a source book (page index, 0-based)."""
+
+    title: str
+    page_index: int
+    children: list["SourceToc"] = field(default_factory=list)
+
+
+@dataclass
+class BookSource:
+    """A parsed source book, ready to be merged into a collection."""
+
+    path: Path
+    title: str
+    kind: str  # epub | cbz | pdf | txt
+    images: list[tuple[str, bytes, int, int]] = field(default_factory=list)  # name, data, w, h
+    chapters: list[tuple[str, list[str]]] = field(default_factory=list)  # title, paragraphs
+    toc: list[SourceToc] = field(default_factory=list)
+    note: str = ""  # extra info surfaced in the UI/log
+
+
+# CJK novels are very often GB18030/GBK rather than UTF-8, and gb18030 can decode
+# almost any byte string, so UTF-8 must be attempted first.
+_TEXT_ENCODINGS = ("utf-8-sig", "utf-16", "gb18030", "big5", "cp1252")
+
+_CHAPTER_PATTERNS = (
+    re.compile(r"^第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节節回卷篇部集话話].{0,40}$"),
+    re.compile(r"^(?:Chapter|CHAPTER|Ch\.|chapter)\s*\d+.{0,40}$"),
+    re.compile(r"^(?:序章|序言|自序|序|前言|引子|楔子|后记|後記|尾声|尾聲|终章|終章|番外.{0,20}|外传.{0,20})$"),
+)
+_CHAPTER_MAX_LEN = 60
+
+
+def read_text_file(path: Path) -> str:
+    """Read a text file, guessing the encoding (UTF-8 first, then GB18030/Big5)."""
+    raw = Path(path).read_bytes()
+    for encoding in _TEXT_ENCODINGS:
+        try:
+            text = raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        # gb18030/big5 never fail, so reject decodings full of replacement chars.
+        if text.count("\ufffd") <= max(1, len(text) // 500):
+            return text.replace("\r\n", "\n").replace("\r", "\n")
+    return raw.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def is_chapter_heading(line: str) -> bool:
+    text = line.strip()
+    if not text or len(text) > _CHAPTER_MAX_LEN:
+        return False
+    return any(pattern.match(text) for pattern in _CHAPTER_PATTERNS)
+
+
+def split_text_chapters(text: str, *, fallback_size: int = 8000) -> list[tuple[str, list[str]]]:
+    """Split a novel into (chapter title, paragraphs).
+
+    Falls back to fixed-size parts when no headings are recognisable, so a plain
+    TXT still converts into something readable.
+    """
+    lines = text.split("\n")
+    chapters: list[tuple[str, list[str]]] = []
+    current_title = ""
+    buffer: list[str] = []
+
+    def flush() -> None:
+        if not buffer:
+            return
+        paras = [p.strip() for p in "\n".join(buffer).split("\n") if p.strip()]
+        if not paras:
+            return
+        title = current_title or ("正文" if not chapters else f"第 {len(chapters) + 1} 部分")
+        chapters.append((title, paras))
+
+    for line in lines:
+        if is_chapter_heading(line):
+            flush()
+            buffer = []
+            current_title = line.strip()
+        else:
+            buffer.append(line)
+    flush()
+
+    if len(chapters) <= 1:
+        # No usable headings: chunk the text so the book still has a TOC.
+        stripped = [p.strip() for p in text.split("\n") if p.strip()]
+        if not stripped:
+            return []
+        chunks: list[tuple[str, list[str]]] = []
+        for start in range(0, len(stripped), 400):
+            chunks.append((f"第 {len(chunks) + 1} 部分", stripped[start:start + 400]))
+        return chunks
+    return chapters
+
+
+def read_txt_source(path: Path) -> BookSource:
+    path = Path(path)
+    chapters = split_text_chapters(read_text_file(path))
+    if not chapters:
+        raise TranscodeError(f"{path.name} 里没有可用的文本")
+    toc = [SourceToc(title, index) for index, (title, _) in enumerate(chapters)]
+    return BookSource(path=path, title=path.stem, kind="txt", chapters=chapters, toc=toc)
+
+
+def read_cbz_source(path: Path) -> BookSource:
+    """CBZ = a ZIP of page images (ComicInfo.xml is ignored)."""
+    path = Path(path)
+    images: list[tuple[str, bytes, int, int]] = []
+    with zipfile.ZipFile(path) as zf:
+        names = [
+            n for n in zf.namelist()
+            if not n.endswith("/")
+            and Path(n).suffix.lower() in IMAGE_EXTS
+            and not Path(n).name.lower().startswith("comicinfo")
+        ]
+        for name in sort_images([Path(n) for n in names]):
+            data = zf.read(str(name))
+            try:
+                width, height = _image_size_from_bytes(data)
+            except Exception:
+                width, height = 1200, 1800
+            images.append((Path(str(name)).name, data, width, height))
+    if not images:
+        raise TranscodeError(f"{path.name} 里没有图片")
+    return BookSource(path=path, title=path.stem, kind="cbz", images=images)
+
+
+def _image_size_from_bytes(data: bytes) -> tuple[int, int]:
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as im:
+        return im.size
+
+
+def _local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def read_epub_source(path: Path) -> BookSource:
+    """Read an EPUB: image pages become fixed-layout pages, text becomes chapters."""
+    import xml.etree.ElementTree as ET
+
+    path = Path(path)
+    images: list[tuple[str, bytes, int, int]] = []
+    chapters: list[tuple[str, list[str]]] = []
+    titles: dict[str, str] = {}  # spine href -> title (for the TOC)
+
+    with zipfile.ZipFile(path) as zf:
+        names = set(zf.namelist())
+
+        def read(rel: str) -> bytes:
+            return zf.read(rel)
+
+        rootfile = ""
+        try:
+            container = ET.fromstring(read("META-INF/container.xml"))
+            for node in container.iter():
+                if _local_name(node.tag) == "rootfile" and node.get("full-path"):
+                    rootfile = node.get("full-path")
+                    break
+        except Exception as exc:
+            raise TranscodeError(f"{path.name} 不是有效的 EPUB：{exc}") from exc
+        if not rootfile or rootfile not in names:
+            raise TranscodeError(f"{path.name} 缺少 OPF")
+
+        opf_dir = str(Path(rootfile).parent).replace("\\", "/")
+        if opf_dir == ".":
+            opf_dir = ""
+        opf = ET.fromstring(read(rootfile))
+
+        manifest: dict[str, tuple[str, str, str]] = {}  # id -> (href, media, props)
+        for node in opf.iter():
+            if _local_name(node.tag) == "item":
+                item_id = node.get("id") or ""
+                manifest[item_id] = (
+                    node.get("href") or "",
+                    node.get("media-type") or "",
+                    node.get("properties") or "",
+                )
+
+        spine_ids: list[str] = []
+        for node in opf.iter():
+            if _local_name(node.tag) == "itemref":
+                spine_ids.append(node.get("idref") or "")
+
+        def join(base: str, href: str) -> str:
+            href = href.split("#", 1)[0]
+            return f"{base}/{href}" if base else href
+
+        def text_of(xhtml: bytes) -> list[str]:
+            try:
+                root = ET.fromstring(xhtml)
+            except Exception:
+                stripped = re.sub(rb"<[^>]+>", b"\n", xhtml).decode("utf-8", "replace")
+                return [s.strip() for s in stripped.split("\n") if s.strip()]
+            paras = []
+            for node in root.iter():
+                if _local_name(node.tag) in ("p", "div", "h1", "h2", "h3"):
+                    chunk = "".join(node.itertext()).strip()
+                    if chunk:
+                        paras.append(chunk)
+            return paras or ["".join(root.itertext()).strip()]
+
+        # Remember where each spine document landed so the source's nav can be
+        # remapped onto real page indices.
+        href_to_page: dict[str, int] = {}
+        for item_id in spine_ids:
+            href, media, _props = manifest.get(item_id, ("", "", ""))
+            if not href:
+                continue
+            rel = join(opf_dir, href)
+            if rel not in names:
+                continue
+            raw = read(rel)
+            # Collect <img>/<image> targets in this spine document.
+            found = re.findall(
+                rb'(?:src|xlink:href|href)\s*=\s*["\']([^"\']+\.(?:jpg|jpeg|png|gif|webp|bmp|avif|tiff?))["\']',
+                raw,
+                re.IGNORECASE,
+            )
+            first_page = len(images)
+            added = False
+            for target in found:
+                img_rel = join(str(Path(rel).parent).replace("\\", "/"), target.decode("utf-8", "replace"))
+                if img_rel not in names:
+                    continue
+                data = read(img_rel)
+                try:
+                    width, height = _image_size_from_bytes(data)
+                except Exception:
+                    width, height = 1200, 1800
+                images.append((Path(img_rel).name, data, width, height))
+                added = True
+            if added:
+                href_to_page[rel] = first_page
+            else:
+                paras = [p for p in text_of(raw) if p]
+                if paras:
+                    href_to_page[rel] = len(chapters)
+                    chapters.append((Path(rel).stem, paras))
+
+        # The EPUB's own navigation gives us the nested TOC (and page titles).
+        nav_href = ""
+        for href, _media, props in manifest.values():
+            if "nav" in props.split():
+                nav_href = href
+                break
+        if nav_href:
+            nav_rel = join(opf_dir, nav_href)
+            if nav_rel in names:
+                try:
+                    nav = ET.fromstring(read(nav_rel))
+                except Exception:
+                    nav = None
+                if nav is not None:
+                    _collect_nav_titles(nav, titles)
+
+    toc: list[SourceToc] = []
+    seen: set[str] = set()
+    for href, title in titles.items():
+        if title in seen:
+            continue
+        seen.add(title)
+        page = href_to_page.get(join(opf_dir, href.split("#", 1)[0]))
+        # Only image pages can be addressed by the merged book's nested list.
+        if page is not None and page < len(images):
+            toc.append(SourceToc(title, page))
+    if not images and not chapters:
+        raise TranscodeError(f"{path.name} 里没有可读内容")
+    return BookSource(path=path, title=path.stem, kind="epub", images=images,
+                      chapters=chapters, toc=toc)
+
+
+def _collect_nav_titles(nav, titles: dict[str, str]) -> None:
+    """Fill href -> title from a nav document (best effort)."""
+    for node in nav.iter():
+        if _local_name(node.tag) != "a":
+            continue
+        href = (node.get("href") or "").split("#", 1)[0]
+        label = "".join(node.itertext()).strip()
+        if href and label:
+            titles.setdefault(href, label)
+
+
+def read_pdf_source(path: Path) -> BookSource:
+    """Extract embedded JPEG (DCTDecode) images from a PDF, in page order.
+
+    Works for scanned/comic PDFs and for the PDFs this tool produces. Text-only
+    PDFs cannot be rasterised without a renderer, so they are reported clearly.
+    """
+    path = Path(path)
+    raw = path.read_bytes()
+    objects: dict[int, bytes] = {}
+    for match in re.finditer(rb"(\d+)\s+0\s+obj\b(.*?)\bendobj", raw, re.DOTALL):
+        objects[int(match.group(1))] = match.group(2)
+
+    def stream_of(body: bytes) -> bytes:
+        start = body.find(b"stream")
+        if start < 0:
+            return b""
+        start += len(b"stream")
+        if body[start:start + 2] == b"\r\n":
+            start += 2
+        elif body[start:start + 1] in (b"\n", b"\r"):
+            start += 1
+        end = body.rfind(b"endstream")
+        return body[start:end] if end >= 0 else body[start:]
+
+    # Page order first; fall back to object order.
+    order: list[int] = []
+    for body in objects.values():
+        if b"/Type" in body and re.search(rb"/Type\s*/Page\b", body):
+            for ref in re.findall(rb"(\d+)\s+0\s+R", body):
+                num = int(ref)
+                if b"/Subtype" in objects.get(num, b"") and b"/Image" in objects.get(num, b""):
+                    order.append(num)
+    if not order:
+        order = [
+            num for num, body in sorted(objects.items())
+            if b"/Subtype" in body and b"/Image" in body and b"/DCTDecode" in body
+        ]
+
+    images: list[tuple[str, bytes, int, int]] = []
+    for num in order:
+        body = objects.get(num, b"")
+        if b"/DCTDecode" not in body:
+            continue
+        data = stream_of(body)
+        if not data.startswith(b"\xff\xd8"):
+            continue
+        try:
+            width, height, _ = _jpeg_dimensions(data)
+        except Exception:
+            try:
+                width, height = _image_size_from_bytes(data)
+            except Exception:
+                width, height = 1200, 1800
+        images.append((f"{len(images) + 1:04d}.jpg", data, width, height))
+
+    if not images:
+        raise TranscodeError(
+            f"{path.name} 里没有可提取的图片（纯文字 PDF 需要渲染器，暂不支持合并）"
+        )
+    return BookSource(path=path, title=path.stem, kind="pdf", images=images)
+
+
+def read_book_source(path: Path) -> BookSource:
+    """Dispatch on the file extension."""
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if not path.is_file():
+        raise TranscodeError(f"文件不存在：{path}")
+    if suffix == ".epub":
+        return read_epub_source(path)
+    if suffix == ".cbz":
+        return read_cbz_source(path)
+    if suffix == ".pdf":
+        return read_pdf_source(path)
+    if suffix in (".txt", ".md"):
+        return read_txt_source(path)
+    raise TranscodeError(f"不支持的文件类型：{suffix or path.name}")
+
+
+# ------------------------------------------------------------------- merging
+
+
+def merge_sources(
+    sources: Sequence[BookSource],
+    target: Path,
+    *,
+    fmt: str = "epub",
+    title: str = "",
+    author: str = "",
+    keep_source_toc: bool = True,
+) -> Path:
+    """Merge several source books into one ebook that carries a nested TOC."""
+    sources = [s for s in sources if s.images or s.chapters]
+    if not sources:
+        raise TranscodeError("没有可合并的内容")
+    book_title = title or target.stem
+    has_text = any(s.chapters for s in sources)
+    has_images = any(s.images for s in sources)
+
+    if fmt in ("pdf", "cbz") and has_text:
+        raise TranscodeError("PDF / CBZ 无法容纳文字章节，含 TXT 的合集请选择 EPUB")
+
+    if fmt == "epub":
+        docs: list[EpubDoc] = []
+        toc: list[EpubTocEntry] = []
+        for src_no, src in enumerate(sources, 1):
+            first_doc = len(docs) + 1
+            children: list[EpubTocEntry] = []
+            # Namespace each source's assets: two books both containing
+            # "0001.jpg" must not collide inside one package.
+            prefix = f"images/s{src_no:03d}"
+            if src.images:
+                for name, data, width, height in src.images:
+                    href = f"{prefix}/{name}"
+                    docs.append(
+                        EpubDoc(
+                            title=f"{src.title} - {name}",
+                            body=_EPUB_PAGE.format(
+                                title=escape(name), w=width, h=height, src=href
+                            ),
+                            assets=[(href, data, _image_media_type(name))],
+                            # The collection's first image is its cover.
+                            cover=not any(d.cover for d in docs),
+                        )
+                    )
+            if src.chapters:
+                for chapter_title, paras in src.chapters:
+                    body = "".join(f"<p>{html_escape(p)}</p>" for p in paras)
+                    docs.append(
+                        EpubDoc(
+                            title=chapter_title,
+                            body=_EPUB_TEXT_PAGE.format(
+                                title=html_escape(chapter_title),
+                                css=_EPUB_TEXT_CSS,
+                                body=f"<h2>{html_escape(chapter_title)}</h2>{body}",
+                            ),
+                            layout="reflowable",
+                        )
+                    )
+            # The source's own TOC is preserved as a nested list, pointing at
+            # the page each entry actually referred to.
+            if keep_source_toc:
+                if src.chapters:
+                    children = [
+                        EpubTocEntry(ct, f"page{first_doc + i:04d}.xhtml")
+                        for i, (ct, _p) in enumerate(src.chapters)
+                    ]
+                elif src.toc:
+                    count = len(src.images)
+                    children = [
+                        EpubTocEntry(
+                            e.title,
+                            f"page{first_doc + min(max(e.page_index, 0), count - 1):04d}.xhtml",
+                        )
+                        for e in src.toc
+                    ]
+            toc.append(EpubTocEntry(src.title, f"page{first_doc:04d}.xhtml", children))
+        return write_epub(target, title=book_title, author=author, docs=docs, toc=toc)
+
+    # PDF / CBZ: images only.
+    flat: list[tuple[str, bytes, int, int]] = []
+    outline: list[SourceToc] = []
+    for src in sources:
+        start = len(flat)
+        flat.extend(src.images)
+        children = [
+            SourceToc(child.title, start + child.page_index, list(child.children))
+            for child in src.toc
+        ] if keep_source_toc else []
+        outline.append(SourceToc(src.title, start, children))
+    if fmt == "cbz":
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_STORED) as zf:
+            for index, (name, data, _w, _h) in enumerate(flat, 1):
+                zf.writestr(f"{index:04d}{Path(name).suffix.lower()}", data)
+            zf.writestr("ComicInfo.xml", _comic_info_xml(book_title, len(flat), author))
+        return target
+    if fmt == "pdf":
+        return build_pdf_from_images(
+            flat, target, title=book_title, author=author, outline=outline
+        )
+    raise TranscodeError(f"不支持的输出格式：{fmt}")
+
+
 # ---------------------------------------------------------------------- engine
+
+
+# Placeholders accepted by the output-name template. ``title``/``folder`` fall
+# back to each other so a half-filled form still yields sensible names.
+NAME_PLACEHOLDERS = ("title", "folder", "index", "index2", "index3", "total", "date")
+
+
+def render_book_name(
+    template: str,
+    *,
+    title: str = "",
+    folder: str = "",
+    index: int = 1,
+    total: int = 1,
+) -> str:
+    """Turn a name template into one output name.
+
+    Empty template falls back to sensible defaults: a single book uses the
+    user's title (or the folder name); several books are disambiguated by the
+    folder name so they do not all collapse onto one filename.
+    """
+    import datetime as _datetime
+
+    title = (title or "").strip()
+    folder = (folder or "").strip()
+    values = {
+        "title": title or folder or "ebook",
+        "folder": folder or title or "ebook",
+        "index": str(index),
+        "index2": f"{index:02d}",
+        "index3": f"{index:03d}",
+        "total": str(total),
+        "date": _datetime.date.today().strftime("%Y%m%d"),
+    }
+    if not template.strip():
+        if total > 1:
+            return f"{title} - {folder}" if title and folder else (folder or title or "ebook")
+        return title or folder or "ebook"
+    try:
+        rendered = template.format(**values)
+    except KeyError as exc:
+        raise TranscodeError(
+            f"命名模板里的 {{{exc.args[0]}}} 不是可用占位符（可用：{', '.join(NAME_PLACEHOLDERS)}）"
+        ) from exc
+    except (IndexError, ValueError) as exc:
+        raise TranscodeError(f"命名模板有误：{template}（{exc}）") from exc
+    return rendered.strip() or values["title"]
+
+
+def plan_names(
+    groups: Sequence[dict[str, Any]],
+    *,
+    fmt: str = "epub",
+    title: str = "",
+    name_template: str = "",
+    target_dir: Optional[Path] = None,
+    overwrite: bool = False,
+) -> list[dict[str, str]]:
+    """Predict the exact output filenames for the current settings.
+
+    The UI calls this to show a live preview, and :meth:`EbookBuilder.build`
+    uses it for the real names — so what the user sees is what gets written.
+    """
+    total = len(groups)
+    taken: set[str] = set()
+    planned: list[dict[str, str]] = []
+    for index, group in enumerate(groups, 1):
+        folder = str(group.get("name") or "").strip()
+        book = render_book_name(
+            name_template, title=title, folder=folder, index=index, total=total
+        )
+        stem = safe_filename(book)
+        name = f"{stem}.{fmt}"
+        if target_dir is not None:
+            directory = Path(target_dir)
+            counter = 1
+            while (not overwrite and (directory / name).exists()) or name in taken:
+                name = f"{stem}-{counter}.{fmt}"
+                counter += 1
+        taken.add(name)
+        planned.append({"group": folder, "title": book, "file": name})
+    return planned
 
 
 def _coerce_image_path(value: Any) -> Path:
@@ -558,16 +1360,32 @@ class EbookBuilder:
         author: str = "",
         overwrite: bool = False,
         comic_info: bool = True,
+        name_template: str = "",
     ) -> list[Path]:
         """Build one ebook per group; returns the written paths.
 
         ``groups`` is the (possibly user-reordered) ``[{name, images:[...]}]``
         structure: ``images`` entries may be dicts with ``path`` or paths.
+        Names come from :func:`plan_names`, so the UI preview is exact.
         """
         target_dir = ensure_directory(Path(target_dir).expanduser().resolve())
         fmt = (fmt or "cbz").lower()
         if fmt not in ("pdf", "cbz", "epub"):
             raise TranscodeError(f"不支持的电子书格式：{fmt}")
+
+        # Skip empty groups up front so naming/indices match the preview.
+        groups = [g for g in groups if g.get("images")]
+        if not groups:
+            raise TranscodeError("没有可转换的图片")
+
+        planned = plan_names(
+            groups,
+            fmt=fmt,
+            title=title,
+            name_template=name_template,
+            target_dir=target_dir,
+            overwrite=overwrite,
+        )
 
         results: list[Path] = []
         total_groups = max(1, len(groups))
@@ -575,26 +1393,11 @@ class EbookBuilder:
             if self._cancel:
                 raise CanceledError("ebook build cancelled by user")
             pages = [_coerce_image_path(img) for img in group.get("images", [])]
-            if not pages:
-                continue
             missing = [p for p in pages if not p.is_file()]
             if missing:
                 raise TranscodeError(f"图片不存在：{missing[0]}")
-            # Naming: with several groups ("one book per subfolder") each book
-            # must be distinguishable — use the group name, optionally prefixed
-            # by the user's title, instead of giving every book the same name.
-            group_name = str(group.get("name") or "").strip()
-            if len(groups) > 1:
-                if title and group_name:
-                    book_title = f"{title} - {group_name}"
-                else:
-                    book_title = group_name or title or target_dir.name or "ebook"
-            else:
-                book_title = title or group_name or target_dir.name or "ebook"
-            stem = safe_filename(book_title)
-            target = target_dir / f"{stem}.{fmt}"
-            if not overwrite and target.exists():
-                target = unique_path(target)
+            book_title = planned[index - 1]["title"]
+            target = target_dir / planned[index - 1]["file"]
 
             self._emit(
                 "running",
@@ -644,3 +1447,76 @@ class EbookBuilder:
             temp.unlink(missing_ok=True)
             raise
         return target
+
+    # ------------------------------------------------------------------ merge
+
+    async def merge(
+        self,
+        files: Sequence[Path | str],
+        target_dir: Path,
+        *,
+        fmt: str = "epub",
+        title: str = "",
+        author: str = "",
+        overwrite: bool = False,
+        keep_source_toc: bool = True,
+    ) -> list[Path]:
+        """Merge several ebooks / TXT files into one book that carries a TOC."""
+        import os
+
+        target_dir = ensure_directory(Path(target_dir).expanduser().resolve())
+        fmt = (fmt or "epub").lower()
+        paths = [Path(f) for f in files if str(f).strip()]
+        if not paths:
+            raise TranscodeError("没有选择要合并的文件")
+
+        sources: list[BookSource] = []
+        total = len(paths)
+        for index, path in enumerate(paths, 1):
+            if self._cancel:
+                raise CanceledError("ebook merge cancelled by user")
+            self._emit(
+                "running",
+                progress=(index - 1) / (total + 1),
+                percent=(index - 1) / (total + 1) * 100,
+                detail=f"正在读取 {path.name}（{index}/{total}）",
+            )
+            sources.append(await asyncio.to_thread(read_book_source, path))
+
+        book_title = title.strip() or "合集"
+        stem = safe_filename(render_book_name(title or "合集", title=title or "合集"))
+        target = target_dir / f"{stem}.{fmt}"
+        if not overwrite and target.exists():
+            target = unique_path(target)
+
+        self._emit(
+            "running",
+            progress=total / (total + 1),
+            percent=total / (total + 1) * 100,
+            detail=f"正在合并 {len(sources)} 本 → {target.name}",
+        )
+        pages = sum(len(s.images) for s in sources)
+        chapters = sum(len(s.chapters) for s in sources)
+        temp = target.with_name(f".{target.name}.part-{os.getpid()}")
+        try:
+            await asyncio.to_thread(
+                merge_sources,
+                sources,
+                temp,
+                fmt=fmt,
+                title=book_title,
+                author=author,
+                keep_source_toc=keep_source_toc,
+            )
+            os.replace(temp, target)
+        except Exception:
+            temp.unlink(missing_ok=True)
+            raise
+
+        self._emit(
+            "finished",
+            progress=1.0,
+            percent=100.0,
+            detail=f"已合并 {len(sources)} 本（{pages} 页 / {chapters} 章）→ {target.name}",
+        )
+        return [target]

@@ -358,6 +358,114 @@ body {
 .field-inline input { flex: 1; min-width: 0; }
 .field-inline .btn { flex-shrink: 0; white-space: nowrap; }
 
+.hint-inline {
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: help;
+  white-space: nowrap;
+}
+
+/* Live preview of the output filenames. */
+.name-preview {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-soft);
+  background: var(--bg-soft);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  margin: 2px 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name-preview strong { color: var(--accent-hover); font-weight: 600; }
+
+/* Merge list: one compact row per source book. */
+.merge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 168px;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.merge-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.merge-item.dragging { opacity: 0.4; }
+.merge-item.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
+.merge-item.drop-after { box-shadow: 0 2px 0 0 var(--accent); }
+
+.merge-no {
+  flex-shrink: 0;
+  min-width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: var(--bg-deep);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+.merge-grip {
+  flex-shrink: 0;
+  cursor: grab;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  touch-action: none;
+}
+
+.merge-grip:active { cursor: grabbing; }
+
+.merge-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merge-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+.merge-kind {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--info-soft);
+  color: var(--info);
+  text-transform: uppercase;
+}
+
+.merge-kind.bad { background: var(--danger-soft); color: var(--danger); }
+
+.merge-item .ebook-arrows { flex-shrink: 0; }
+
 .convert-card {
   display: flex;
   flex-direction: column;
@@ -842,6 +950,7 @@ body {
 .job-kind.download { background: var(--accent-soft); color: var(--accent-hover); }
 .job-kind.convert, .job-kind.bili { background: var(--info-soft); color: var(--info); }
 .job-kind.ebook { background: var(--success-soft); color: var(--success); }
+.job-kind.merge { background: var(--info-soft); color: var(--info); }
 
 .job-label {
   flex: 1;

@@ -16,10 +16,15 @@ const state = {
   ebookDir: null,
   ebookGroups: [],        // [{ name, images: [{path,name,...}] }]
   ebookThumbs: new Map(), // path -> data URI
+  ebookMode: null,        // the mode the current grouping was scanned with
+  ebookScanning: false,
+  mergeFiles: [],         // [{ path, name, ok, kind, title, pages, chapters }]
+  mergeDir: null,
+  mergeTitleTouched: false,
 };
 
 const $ = (id) => document.getElementById(id);
-const KIND_LABEL = { download: "下载", convert: "转码", bili: "B站缓存", ebook: "电子书" };
+const KIND_LABEL = { download: "下载", convert: "转码", bili: "B站缓存", ebook: "电子书", merge: "合集" };
 
 /* ---------------------------------------------------------- tabs */
 
@@ -206,6 +211,8 @@ function handleEvent(ev) {
         $("biliPath").dataset.folder = ev.path;
       } else if (ev.target === "ebook") {
         ebookSetFolder(ev.path);
+      } else if (ev.target === "merge") {
+        handleMergeDrop(ev.path);
       }
     }
     renderQueue();
@@ -290,7 +297,7 @@ function optimisticJob(jobId, kind, label) {
   renderQueue();
 }
 
-const DIR_LABELS = { dlDir: "dlDirPath", cvDir: "cvDirPath", biliDir: "biliDirPath", ebookDir: "ebookDirPath" };
+const DIR_LABELS = { dlDir: "dlDirPath", cvDir: "cvDirPath", biliDir: "biliDirPath", ebookDir: "ebookDirPath", mergeDir: "mergeDirPath" };
 
 function pickDir(field) {
   return api().pick_output_dir().then((path) => {
@@ -346,24 +353,45 @@ function ebookSetFolder(folder) {
   scanEbook(folder);
 }
 
+let ebookScanToken = 0; // invalidates stale scan responses (see scanEbook)
+
 async function scanEbook(folder) {
   const mode = $("ebookMode").value;
-  const res = await api().scan_images(folder, mode);
-  if (!res || !res.ok) {
-    toast((res && res.error) || "扫描图片失败", "error");
-    return;
+  const token = ++ebookScanToken;
+  state.ebookScanning = true;
+  $("ebookStart").disabled = true;
+  $("ebookCount").textContent = "正在扫描…";
+  try {
+    const res = await api().scan_images(folder, mode);
+    // A newer scan (or a folder change) superseded this one — dropping the
+    // stale result is what keeps the grouping in sync with the mode selector.
+    if (token !== ebookScanToken) return;
+    if ($("ebookPath").dataset.folder !== folder) return;
+    if (!res || !res.ok) {
+      // Keep the selector consistent with the list that is still displayed.
+      if (state.ebookMode) $("ebookMode").value = state.ebookMode;
+      toast((res && res.error) || "扫描图片失败", "error");
+      return;
+    }
+    state.ebookGroups = (res.groups || []).map((g) => ({
+      name: g.name,
+      images: (g.images || []).slice(),
+    }));
+    state.ebookMode = mode; // the grouping shown belongs to THIS mode
+    state.ebookThumbs = new Map();
+    $("ebookListWrap").style.display = "block";
+    $("ebookRescan").style.display = "";
+    renderEbookList();
+    loadEbookThumbs();
+    refreshEbookNames();
+    toast(`已识别 ${res.total} 张图片（自动排序）`, "success");
+    log("info", `[电子书] 扫描 ${folder}：${res.total} 张，${state.ebookGroups.length} 组（${mode === "per_folder" ? "每文件夹一本" : "合并一本"}）`);
+  } finally {
+    if (token === ebookScanToken) {
+      state.ebookScanning = false;
+      $("ebookStart").disabled = false;
+    }
   }
-  state.ebookGroups = (res.groups || []).map((g) => ({
-    name: g.name,
-    images: (g.images || []).slice(),
-  }));
-  state.ebookThumbs = new Map();
-  $("ebookListWrap").style.display = "block";
-  $("ebookRescan").style.display = "";
-  renderEbookList();
-  loadEbookThumbs();
-  toast(`已识别 ${res.total} 张图片（自动排序）`, "success");
-  log("info", `[电子书] 扫描 ${folder}：${res.total} 张，${state.ebookGroups.length} 组`);
 }
 
 function ebookItemHtml(image, groupIndex, indexInGroup, groupLength) {
@@ -426,6 +454,7 @@ function renderEbookList() {
       openImageModal(gi, ii);
     });
   });
+  scheduleEbookNames();
 }
 
 function clearDropMarks() {
@@ -655,6 +684,50 @@ $("ebookMode").addEventListener("change", () => {
   if (folder) scanEbook(folder); // regroup
 });
 
+/* -------- output name preview (same logic the backend will use) -------- */
+
+let ebookNameToken = 0;
+
+async function refreshEbookNames() {
+  const host = $("ebookNamePreview");
+  const groups = state.ebookGroups.filter((g) => g.images.length);
+  if (!groups.length) {
+    host.textContent = "将生成：—";
+    return;
+  }
+  const token = ++ebookNameToken;
+  const res = await api().ebook_names(
+    groups.map((g) => ({ name: g.name, images: g.images.map((i) => i.path) })),
+    {
+      format: $("ebookFormat").value,
+      title: $("ebookTitle").value.trim(),
+      nameTemplate: $("ebookTemplate").value.trim(),
+      destination: state.ebookDir,
+      overwrite: $("ebookOverwrite").checked,
+    }
+  );
+  if (token !== ebookNameToken) return;
+  if (!res || !res.ok) {
+    host.textContent = "命名模板有误：" + ((res && res.error) || "");
+    return;
+  }
+  const names = (res.names || []).map((n) => n.file);
+  if (names.length <= 1) {
+    host.innerHTML = `将生成：<strong>${escapeHtml(names[0] || "—")}</strong>`;
+    return;
+  }
+  const head = names.slice(0, 2).map((n) => `<strong>${escapeHtml(n)}</strong>`).join("、");
+  host.innerHTML =
+    `将生成 <strong>${names.length}</strong> 个文件：${head}` +
+    (names.length > 2 ? ` 等 ${names.length} 个` : "");
+}
+
+let ebookNameTimer = null;
+function scheduleEbookNames() {
+  clearTimeout(ebookNameTimer);
+  ebookNameTimer = setTimeout(refreshEbookNames, 220);
+}
+
 $("ebookReset").addEventListener("click", () => {
   const folder = $("ebookPath").dataset.folder;
   if (folder) scanEbook(folder);
@@ -662,16 +735,27 @@ $("ebookReset").addEventListener("click", () => {
 
 $("ebookDirPick").addEventListener("click", () => pickDir("ebookDir"));
 
+// Naming controls feed the live filename preview.
+["ebookTitle", "ebookTemplate"].forEach((id) =>
+  $(id).addEventListener("input", scheduleEbookNames));
+["ebookFormat", "ebookOverwrite"].forEach((id) =>
+  $(id).addEventListener("change", () => { scheduleEbookNames(); renderEbookList(); }));
+
 $("ebookStart").addEventListener("click", () => {
   const folder = $("ebookPath").dataset.folder;
   if (!folder) { toast("请先选择图片文件夹", "error"); return; }
+  if (state.ebookScanning) { toast("正在重新扫描，请稍候…", "info"); return; }
   const images = ebookFlatImages();
   if (!images.length) { toast("没有可转换的图片", "error"); return; }
+  // Use the mode the displayed grouping was built with, so `mode` and `orders`
+  // can never disagree (changing the selector mid-scan used to do exactly that).
+  const mode = state.ebookMode || $("ebookMode").value;
   const options = {
     destination: state.ebookDir,
     format: $("ebookFormat").value,
-    mode: $("ebookMode").value,
+    mode,
     title: $("ebookTitle").value.trim() || undefined,
+    nameTemplate: $("ebookTemplate").value.trim() || undefined,
     author: $("ebookAuthor").value.trim() || undefined,
     overwrite: $("ebookOverwrite").checked,
     orders: state.ebookGroups
@@ -680,8 +764,271 @@ $("ebookStart").addEventListener("click", () => {
   };
   api().start_ebook(folder, options).then((res) => {
     if (res.ok) {
-      log("info", `[${res.jobId}] 提交电子书生成：${folder}（${images.length} 张，${options.format.toUpperCase()}）`);
+      log("info", `[${res.jobId}] 提交电子书生成：${folder}（${images.length} 张，${options.format.toUpperCase()}，${mode === "per_folder" ? state.ebookGroups.length + " 本" : "合并 1 本"}）`);
       optimisticJob(res.jobId, "ebook", $("ebookTitle").value.trim() || folder.split(/[\\/]/).filter(Boolean).pop());
+      switchPanel("queue");
+    } else {
+      toast(res.error || "提交失败", "error");
+    }
+  });
+});
+
+/* -------- merge ebooks / TXT into one collection -------- */
+
+const MERGE_KINDS = { epub: "EPUB", cbz: "CBZ", pdf: "PDF", txt: "TXT" };
+const MERGE_ACCEPT = [".epub", ".cbz", ".pdf", ".txt", ".md"];
+let mergeInfoToken = 0;
+let mergeDragFrom = null;
+
+function mergePaths() {
+  return state.mergeFiles.map((f) => f.path);
+}
+
+function mergeBaseName(path) {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
+function mergeExt(path) {
+  const m = /\.([a-z0-9]+)$/i.exec(path);
+  return m ? m[1].toLowerCase() : "";
+}
+
+/** Add files (and, for dropped folders, every book inside them). */
+function handleMergeDrop(path) {
+  if (!path) return;
+  const ext = mergeExt(path);
+  if (MERGE_ACCEPT.includes("." + ext)) {
+    addMergeFiles([path]);
+    return;
+  }
+  // A folder: ask the backend to expand it into book files.
+  api().list_books(path).then((res) => {
+    if (res && res.ok && (res.files || []).length) {
+      addMergeFiles(res.files);
+      toast(`已添加 ${res.files.length} 个文件`, "success");
+    } else {
+      toast((res && res.error) || "该文件夹里没有可合并的文件", "error");
+    }
+  });
+}
+
+function addMergeFiles(paths) {
+  const known = new Set(state.mergeFiles.map((f) => f.path));
+  let added = 0;
+  (paths || []).forEach((p) => {
+    if (!p || known.has(p)) return;
+    known.add(p);
+    state.mergeFiles.push({ path: p, name: mergeBaseName(p) });
+    added += 1;
+  });
+  if (added) {
+    refreshMergeInfo();
+    if (!state.mergeTitleTouched && !$("mergeTitle").value.trim()) {
+      $("mergeTitle").value = state.mergeFiles.length === 1
+        ? state.mergeFiles[0].name.replace(/\.[^.]+$/, "")
+        : "";
+      $("mergeTitle").placeholder = state.mergeFiles.length === 1
+        ? state.mergeFiles[0].name.replace(/\.[^.]+$/, "")
+        : "合集";
+    }
+  }
+  renderMergeList();
+}
+
+async function refreshMergeInfo() {
+  if (!state.mergeFiles.length) return;
+  const token = ++mergeInfoToken;
+  const res = await api().inspect_books(mergePaths());
+  if (token !== mergeInfoToken) return;
+  if (!res || !res.ok) return;
+  const info = new Map((res.items || []).map((i) => [i.path, i]));
+  state.mergeFiles.forEach((f) => Object.assign(f, info.get(f.path) || { ok: false, error: "无法读取" }));
+  renderMergeList();
+}
+
+function mergeItemHtml(file, index, total) {
+  const kind = (file.kind || mergeExt(file.path) || "?").toLowerCase();
+  const bad = file.ok === false;
+  const label = MERGE_KINDS[kind] || kind.toUpperCase();
+  let meta = "";
+  if (bad) meta = mergeEsc(file.error || "无法读取");
+  else if (file.chapters) meta = `${file.chapters} 章`;
+  else if (file.pages) meta = `${file.pages} 页`;
+  const title = file.title || file.name;
+  return `
+    <div class="merge-item" data-index="${index}" data-path="${mergeEsc(file.path)}" title="${mergeEsc(file.path)}">
+      <span class="merge-no">${index + 1}</span>
+      <span class="merge-grip" data-grip="1" title="按住拖动排序">⠿</span>
+      <span class="merge-kind${bad ? " bad" : ""}">${mergeEsc(label)}</span>
+      <span class="merge-title">${mergeEsc(title)}</span>
+      <span class="merge-meta">${meta}</span>
+      <div class="ebook-arrows">
+        <button data-move="up" ${index === 0 ? "disabled" : ""}>▲</button>
+        <button data-move="down" ${index === total - 1 ? "disabled" : ""}>▼</button>
+      </div>
+    </div>`;
+}
+
+function renderMergeList() {
+  const host = $("mergeList");
+  const total = state.mergeFiles.length;
+  $("mergeListWrap").style.display = total ? "block" : "none";
+  $("mergeCount").textContent = `${total} 本`;
+  const pages = state.mergeFiles.reduce((n, f) => n + (f.pages || 0), 0);
+  const chapters = state.mergeFiles.reduce((n, f) => n + (f.chapters || 0), 0);
+  const bad = state.mergeFiles.filter((f) => f.ok === false).length;
+  $("mergeSummary").textContent = total
+    ? [pages ? `${pages} 页` : "", chapters ? `${chapters} 章` : "", bad ? `${bad} 个无法读取` : ""]
+        .filter(Boolean).join(" · ")
+    : "";
+  $("mergeHint").textContent = total ? `已选 ${total} 个文件` : "未选择文件";
+  host.innerHTML = state.mergeFiles.map((f, i) => mergeItemHtml(f, i, total)).join("");
+
+  host.querySelectorAll(".merge-item").forEach((el) => {
+    const index = Number(el.dataset.index);
+    el.querySelectorAll("[data-move]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        moveMerge(index, btn.dataset.move === "up" ? -1 : 1);
+      });
+    });
+    el.addEventListener("pointerdown", (e) => startMergeDrag(e, index, el));
+    el.addEventListener("dblclick", () => api().open_path(state.mergeFiles[index].path));
+  });
+}
+
+function moveMerge(index, delta) {
+  const target = index + delta;
+  if (target < 0 || target >= state.mergeFiles.length) return;
+  const list = state.mergeFiles;
+  [list[index], list[target]] = [list[target], list[index]];
+  renderMergeList();
+}
+
+function startMergeDrag(e, index, el) {
+  if (e.button !== 0 && e.pointerType === "mouse") return;
+  if (e.pointerType !== "mouse" && !e.target.closest(".merge-grip")) return;
+  mergeDragFrom = {
+    index, startX: e.clientX, startY: e.clientY, active: false,
+    pointerId: e.pointerId, el,
+  };
+  try { el.setPointerCapture(e.pointerId); } catch (err) { /* best effort */ }
+}
+
+function moveMergeDrag(e) {
+  if (!mergeDragFrom || e.pointerId !== mergeDragFrom.pointerId) return;
+  const dx = e.clientX - mergeDragFrom.startX;
+  const dy = e.clientY - mergeDragFrom.startY;
+  if (!mergeDragFrom.active) {
+    if (dx * dx + dy * dy < 16) return;
+    mergeDragFrom.active = true;
+    mergeDragFrom.el.classList.add("dragging");
+  }
+  e.preventDefault();
+  const target = mergeRowAt(e.clientY);
+  $("mergeList").querySelectorAll(".merge-item").forEach((n) =>
+    n.classList.remove("drop-before", "drop-after"));
+  if (target && target.index !== mergeDragFrom.index) {
+    target.el.classList.add(target.after ? "drop-after" : "drop-before");
+  }
+}
+
+function endMergeDrag(e) {
+  if (!mergeDragFrom || e.pointerId !== mergeDragFrom.pointerId) return;
+  const st = mergeDragFrom;
+  mergeDragFrom = null;
+  st.el.classList.remove("dragging");
+  $("mergeList").querySelectorAll(".merge-item").forEach((n) =>
+    n.classList.remove("drop-before", "drop-after"));
+  if (!st.active) return;
+  const target = mergeRowAt(e.clientY);
+  if (!target || target.index === st.index) return;
+  let to = target.index + (target.after ? 1 : 0);
+  if (to > st.index) to -= 1;
+  const list = state.mergeFiles;
+  const [moved] = list.splice(st.index, 1);
+  list.splice(Math.max(0, Math.min(to, list.length)), 0, moved);
+  renderMergeList();
+}
+
+function mergeRowAt(clientY) {
+  const rows = Array.from($("mergeList").querySelectorAll(".merge-item"));
+  let best = null;
+  let bestDist = Infinity;
+  rows.forEach((el) => {
+    const r = el.getBoundingClientRect();
+    const d = Math.abs(clientY - (r.top + r.height / 2));
+    if (d < bestDist) {
+      bestDist = d;
+      best = { el, index: Number(el.dataset.index), after: clientY > r.top + r.height / 2 };
+    }
+  });
+  return best;
+}
+
+function mergeEsc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+document.addEventListener("pointermove", moveMergeDrag);
+document.addEventListener("pointerup", endMergeDrag);
+document.addEventListener("pointercancel", endMergeDrag);
+
+$("mergePickFiles").addEventListener("click", () => {
+  api().pick_books().then((paths) => {
+    if (paths && paths.length) addMergeFiles(paths);
+  });
+});
+
+$("mergePickFolder").addEventListener("click", () => {
+  api().pick_folder().then((folder) => {
+    if (!folder) return;
+    api().list_books(folder).then((res) => {
+      if (res && res.ok && (res.files || []).length) {
+        addMergeFiles(res.files);
+        toast(`已添加 ${res.files.length} 个文件`, "success");
+      } else {
+        toast((res && res.error) || "该文件夹里没有可合并的文件", "error");
+      }
+    });
+  });
+});
+
+$("mergeClear").addEventListener("click", () => {
+  state.mergeFiles = [];
+  $("mergeTitle").value = "";
+  renderMergeList();
+});
+
+$("mergeDirPick").addEventListener("click", () => pickDir("mergeDir"));
+
+$("mergeTitle").addEventListener("input", () => { state.mergeTitleTouched = true; });
+
+$("mergeFormat").addEventListener("change", () => {
+  const fmt = $("mergeFormat").value;
+  if (fmt !== "epub" && state.mergeFiles.some((f) => (f.kind || mergeExt(f.path)) === "txt")) {
+    toast("TXT 只能合并为 EPUB（PDF/CBZ 无法容纳文字）", "info");
+  }
+});
+
+$("mergeStart").addEventListener("click", () => {
+  if (!state.mergeFiles.length) { toast("请先添加要合并的电子书", "error"); return; }
+  const bad = state.mergeFiles.filter((f) => f.ok === false);
+  if (bad.length) { toast(`有 ${bad.length} 个文件无法读取，请先移除`, "error"); return; }
+  const options = {
+    destination: state.mergeDir,
+    format: $("mergeFormat").value,
+    title: $("mergeTitle").value.trim() || "合集",
+    author: $("mergeAuthor").value.trim() || undefined,
+    overwrite: $("mergeOverwrite").checked,
+    keepSourceToc: $("mergeKeepToc").checked,
+  };
+  api().start_merge(mergePaths(), options).then((res) => {
+    if (res.ok) {
+      log("info", `[${res.jobId}] 提交合集合并：${state.mergeFiles.length} 本 → ${options.title}.${options.format}`);
+      optimisticJob(res.jobId, "merge", options.title);
       switchPanel("queue");
     } else {
       toast(res.error || "提交失败", "error");
@@ -991,6 +1338,7 @@ function setupDropZone(zoneId) {
 setupDropZone("cvDropZone");
 setupDropZone("biliDropZone");
 setupDropZone("ebookDropZone");
+setupDropZone("mergeDropZone");
 
 /* -------- update check (J) -------- */
 

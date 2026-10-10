@@ -21,6 +21,15 @@
   - **手动排序**：缩略图拖拽（鼠标/触摸均可）+ ▲▼ 按钮 + 一键重置
   - 双击缩略图**查看大图**（可切换上一张/下一张）
   - 两种模式：合并成一本书 / 每个子文件夹一本
+  - **命名模板**（`{title}` `{folder}` `{index}` `{total}` `{date}`…）+ **实时文件名预览**
+- **电子书合集 / TXT**：把多本电子书或 TXT 合并成一本，**带两级目录**
+  - 源支持 **EPUB / CBZ / PDF / TXT**，可混着合（漫画 + 小说）
+  - 原书自带的目录会作为子目录**保留**下来
+  - TXT 自动识别章节（`第X章/卷/回`、`Chapter N`、`序章/番外`…），并自动识别 **UTF-8 / GB18030 / Big5** 编码
+  - 输出 **EPUB（带目录）/ PDF（书签目录）/ CBZ**
+
+> EPUB 采用固定版式（`rendition:layout=pre-paginated`，图片页内嵌 SVG 精确铺满），
+> 单页翻页不会再出现空白页。
 
 **桌面 UI**
 - 五个视图：下载 / 转换 / 队列 / 日志 / 设置
@@ -32,7 +41,7 @@
 
 ```sh
 uv sync
-uv run pytest -q          # 测试（79 个）
+uv run pytest -q          # 测试（103 个）
 uv run nyavview --help    # CLI
 uv run nyavview-gui       # 桌面 UI
 ```
