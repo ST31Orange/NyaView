@@ -102,6 +102,18 @@ uv run nyavview --help
 uv run python selftest_ui.py   # 打开真实窗口自检 UI 渲染
 ```
 
+## 书库整理工具
+
+[`tools/`](tools/) 下有几个**只用标准库**的命令行小工具，用于「把书库整理干净、再交给 NyaView 转电子书」：
+
+| 工具 | 用途 |
+|---|---|
+| [`tools/restore_manga_names.py`](tools/restore_manga_names.py) | 还原 Cimoc 漫画的 `m<数字>` 乱码文件夹名为 `第75话`（读 `index.cdif`，可撤销）|
+| [`tools/txt_dedupe.py`](tools/txt_dedupe.py) | 书库 TXT **内容查重**，找出同一本书的不同版本并保留最全的一版 |
+| [`tools/txt_collect.py`](tools/txt_collect.py) | 汇总 TXT 到干净目录，并可清理孤儿 `.sdr` 阅读进度目录 |
+
+三者默认都是**只预览**，加 `--apply` 才动手；详见 [tools/README.md](tools/README.md)。
+
 ## 许可
 
 [MIT](LICENSE)
