@@ -23,6 +23,9 @@ a = Analysis(
         # static analysis cannot see it, so bundle it explicitly.
         "yt_dlp",
         "yt_dlp.utils",
+        # The Bilibili backup-CDN patch (nyavview.engines.bilibili_cdn) imports
+        # this extractor lazily to patch it; make sure the frozen build has it.
+        "yt_dlp.extractor.bilibili",
         # webview backends are loaded dynamically.
         "webview.platforms.edgechromium",
         "webview.platforms.winforms",

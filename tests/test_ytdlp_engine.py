@@ -131,7 +131,8 @@ def test_run_falls_back_when_cookie_db_locked(monkeypatch) -> None:
 
     def fake_run_once(self, url, destination, audio_only, overwrite, ydl_cls,
                       playlist_items=None, prefer_h264=True, write_subs=False,
-                      outtmpl=None, format_id=None, audio_format=None, resilient=False):
+                      outtmpl=None, format_id=None, audio_format=None, resilient=False,
+                      cdn_backup_index=0):
         calls.append(str(self.settings.cookies_from_browser))
         if self.settings.cookies_from_browser:
             raise yt_dlp.utils.DownloadError(
@@ -266,8 +267,9 @@ def test_download_forwards_resilient_to_the_engine(monkeypatch) -> None:
 
     def fake_run(url, destination, audio_only, overwrite, playlist_items=None,
                  prefer_h264=True, write_subs=False, outtmpl=None, format_id=None,
-                 audio_format=None, resilient=False):
+                 audio_format=None, resilient=False, cdn_backup_index=0):
         seen["resilient"] = resilient
+        seen["cdn_backup_index"] = cdn_backup_index
         return Path(destination) / "out.mp4"
 
     monkeypatch.setattr(engine, "_run", fake_run)

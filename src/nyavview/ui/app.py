@@ -10,6 +10,7 @@ from pathlib import Path
 
 import webview
 
+from nyavview.engines import bilibili_cdn
 from nyavview.ui.api import Api, APP_NAME, load_user_settings
 from nyavview.ui.queue import JobManager
 
@@ -126,6 +127,15 @@ def main() -> None:
     # Start from the user-level settings (~/.nyavview.toml) when present.
     manager = JobManager(settings=load_user_settings())
     manager.start()
+    # The Bilibili backup-CDN rotation patches a yt-dlp method at runtime; if a
+    # future yt-dlp renames it the app keeps working but silently loses the
+    # feature, so say which one happened in the log panel.
+    cdn_status = bilibili_cdn.install()
+    ok = cdn_status in ("patched", "already patched")
+    manager.emit_log(
+        "info" if ok else "warn",
+        "B 站备用 CDN 支持：" + ("已启用（主源失败时自动改用备用源）" if ok else f"未启用（{cdn_status}）"),
+    )
     api = Api(manager)
     window = webview.create_window(
         title=f"{APP_NAME} · 视频下载与转换",

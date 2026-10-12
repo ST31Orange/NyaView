@@ -20,6 +20,8 @@ a = Analysis(
     hiddenimports=[
         "yt_dlp",
         "yt_dlp.utils",
+        # patched by nyavview.engines.bilibili_cdn (backup CDN rotation)
+        "yt_dlp.extractor.bilibili",
         "webview.platforms.edgechromium",
         "webview.platforms.winforms",
         "imageio_ffmpeg.binaries",

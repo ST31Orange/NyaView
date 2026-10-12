@@ -218,6 +218,11 @@ function handleEvent(ev) {
     renderQueue();
     return;
   }
+  // A plain log line pushed from Python (no job attached).
+  if (ev.type === "log") {
+    log(ev.level || "info", ev.message || "");
+    return;
+  }
   // Ensure the job exists: events may arrive before we ever saw this job
   // (e.g. submitted in this session), so create it from the event payload.
   let job = state.jobs.get(ev.jobId);

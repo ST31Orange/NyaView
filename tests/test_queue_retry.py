@@ -45,12 +45,14 @@ def manager(tmp_path: Path):
 
 
 def test_interrupted_download_is_retried_with_resilient_mode(manager, monkeypatch, tmp_path) -> None:
-    """3 attempts, and from the 2nd one the engine switches to the resilient
-    (chunked, resumable) download mode."""
+    """3 attempts: the 2nd/3rd switch to the resilient (chunked, resumable)
+    download mode and to Bilibili's backup CDN hosts."""
     attempts: list[bool] = []
+    backups: list[int] = []
 
     async def fake_download(self, url, destination, **kwargs):
         attempts.append(bool(kwargs.get("resilient")))
+        backups.append(int(kwargs.get("cdn_backup_index") or 0))
         raise DownloadError(INTERRUPTED)
 
     monkeypatch.setattr(YtDlpEngine, "download", fake_download)
@@ -62,6 +64,8 @@ def test_interrupted_download_is_retried_with_resilient_mode(manager, monkeypatc
     job = _run_job(manager, job_id)
 
     assert attempts == [False, True, True], attempts
+    # 1st attempt uses the primary CDN, retries walk the backup list
+    assert backups == [0, 1, 2], backups
     assert job["status"] == "error"
     # the raw yt-dlp message is preserved, plus an actionable hint
     assert "Downloaded 224660 bytes, expected 50910358 bytes" in job["error"]

@@ -163,6 +163,10 @@ class JobManager:
         with self._lock:
             self._events.append(event)
 
+    def emit_log(self, level: str, message: str) -> None:
+        """Push a plain log line to the UI's log panel (no job involved)."""
+        self._emit({"type": "log", "level": level, "message": message})
+
     def _register(self, kind: str, label: str) -> Job:
         job = Job(self._next_id(), kind, label)
         with self._lock:
@@ -292,6 +296,10 @@ class JobManager:
                         # longer socket timeout, so an interrupted transfer can
                         # resume instead of being cut at the same place again.
                         resilient=attempt > 1,
+                        # Bilibili returns backup CDN hosts the web player falls
+                        # back to but yt-dlp ignores; try them on retries
+                        # (attempt 2 -> backup #1, attempt 3 -> backup #2, ...).
+                        cdn_backup_index=attempt - 1,
                     )
                     break
                 except (CanceledError, asyncio.CancelledError):

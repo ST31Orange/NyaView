@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 from nyavview.core.errors import CanceledError, DownloadError
 from nyavview.core.events import ProgressEvent
 from nyavview.core.settings import Settings
+from nyavview.engines import bilibili_cdn as cdn
 
 ProgressCallback = Callable[[ProgressEvent], None]
 
@@ -118,6 +119,7 @@ class YtDlpEngine:
         format_id: Optional[str] = None,
         audio_format: Optional[str] = None,
         resilient: bool = False,
+        cdn_backup_index: int = 0,
     ) -> dict[str, Any]:
         opts: dict[str, Any] = {
             # Custom naming template (H) or default "<title>.180B.<ext>".
@@ -206,6 +208,15 @@ class YtDlpEngine:
             opts["concurrent_fragment_downloads"] = 1
             # Back off gradually instead of hammering a struggling CDN.
             opts["retry_sleep_functions"] = {"http": lambda n: min(2 ** n, 30)}
+        if cdn_backup_index > 0:
+            # Bilibili returns a primary URL plus backup URLs on *different*
+            # CDN origins; the web player falls back between them, yt-dlp never
+            # does. Ask our bilibili patch for the k-th backup host.
+            args = dict(opts.get("extractor_args") or {})
+            bilibili = dict(args.get("bilibili") or {})
+            bilibili[cdn.CONFIG_KEY] = [str(cdn_backup_index)]
+            args["bilibili"] = bilibili
+            opts["extractor_args"] = args
         return opts
 
     def _hook(self, data: dict[str, Any]) -> None:
@@ -253,6 +264,7 @@ class YtDlpEngine:
         format_id: Optional[str] = None,
         audio_format: Optional[str] = None,
         resilient: bool = False,
+        cdn_backup_index: int = 0,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415 - imported lazily to keep import cost out of CLI path
         from yt_dlp import YoutubeDL
@@ -261,7 +273,7 @@ class YtDlpEngine:
             return self._run_once(
                 url, destination, audio_only, overwrite, YoutubeDL,
                 playlist_items, prefer_h264, write_subs, outtmpl, format_id, audio_format,
-                resilient,
+                resilient, cdn_backup_index,
             )
         except yt_dlp.utils.DownloadError as exc:
             message = str(exc)
@@ -284,7 +296,7 @@ class YtDlpEngine:
                     return engine._run_once(
                         url, destination, audio_only, overwrite, YoutubeDL,
                         playlist_items, prefer_h264, write_subs, outtmpl, format_id, audio_format,
-                        resilient,
+                        resilient, cdn_backup_index,
                     )
                 except yt_dlp.utils.DownloadError as retry_exc:
                     raise DownloadError(str(retry_exc)) from retry_exc
@@ -304,8 +316,13 @@ class YtDlpEngine:
         format_id: Optional[str] = None,
         audio_format: Optional[str] = None,
         resilient: bool = False,
+        cdn_backup_index: int = 0,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415
+
+        # Bilibili hands out a primary + backup CDN URLs per stream; yt-dlp only
+        # uses the primary. Installed once, before any extraction happens.
+        cdn.install()
 
         opts = self._opts(
             destination,
@@ -318,6 +335,7 @@ class YtDlpEngine:
             format_id=format_id,
             audio_format=audio_format,
             resilient=resilient,
+            cdn_backup_index=cdn_backup_index,
         )
         try:
             with ydl_cls(opts) as ydl:
@@ -373,6 +391,7 @@ class YtDlpEngine:
         format_id: Optional[str] = None,
         audio_format: Optional[str] = None,
         resilient: bool = False,
+        cdn_backup_index: int = 0,
     ) -> Path:
         destination = Path(destination).expanduser().resolve()
         destination.mkdir(parents=True, exist_ok=True)
@@ -391,6 +410,7 @@ class YtDlpEngine:
             format_id,
             audio_format,
             resilient,
+            cdn_backup_index,
         )
 
     async def preview(self, url: str, prefer_h264: bool = True) -> dict[str, Any]:
