@@ -23,6 +23,47 @@ from nyavview.core.settings import Settings
 from nyavview.engines import EbookBuilder, FfmpegTranscoder, YtDlpEngine
 
 
+# yt-dlp reports a transfer that was cut short as
+#   "ERROR: [download] Got error: Downloaded 224660 bytes, expected 50910358 bytes"
+# (ContentTooShortError). That is a transient network failure — yt-dlp retries
+# it and resumes from the partial file — but the message matches none of the
+# obvious keywords, so NyaView used to classify it as permanent and never used
+# its own retries at all.
+_TRANSIENT_DOWNLOAD_MARKERS = (
+    # an interrupted transfer
+    "expected", "content too short", "incomplete", "unable to download",
+    "connection reset", "connection aborted", "connection refused",
+    "broken pipe", "eof occurred", "read timed out",
+    # general network trouble
+    "network", "timeout", "timed out", "temporar", "connection", "socket",
+    "http error 5", "http error 429", "http error 403",
+    "502", "503", "504", "429",
+)
+
+_INCOMPLETE_MARKERS = ("expected", "content too short", "incomplete")
+
+_DOWNLOAD_HINT = (
+    "\n下载连接被中途切断（服务器只传了部分数据就断开，不是文件本身的问题）。"
+    "已自动重试并改用分块续传；若仍失败，通常是本机到该站点的网络链路不稳定：\n"
+    "  · 在境外访问 B 站时尤其常见 → 可尝试代理 / 换网络 / 稍后再试\n"
+    "  · 或先降低画质（如 720P）、或改用「仅音频」\n"
+    "  · 若开了 VPN / 代理，试试关掉或换节点"
+)
+
+
+def _is_transient_download_error(message: str) -> bool:
+    lowered = (message or "").lower()
+    return any(marker in lowered for marker in _TRANSIENT_DOWNLOAD_MARKERS)
+
+
+def _describe_download_error(message: str) -> str:
+    """Add an actionable hint for interrupted-download failures."""
+    lowered = (message or "").lower()
+    if any(marker in lowered for marker in _INCOMPLETE_MARKERS):
+        return message + _DOWNLOAD_HINT
+    return message
+
+
 class JobStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -247,6 +288,10 @@ class JobManager:
                         outtmpl=options.get("outtmpl") or settings.naming_template,
                         format_id=options.get("format") or None,
                         audio_format=options.get("audioFormat") or None,
+                        # From the 2nd attempt on: download in chunks with a
+                        # longer socket timeout, so an interrupted transfer can
+                        # resume instead of being cut at the same place again.
+                        resilient=attempt > 1,
                     )
                     break
                 except (CanceledError, asyncio.CancelledError):
@@ -256,12 +301,7 @@ class JobManager:
                     if attempt >= max_attempts:
                         raise
                     # transient errors only: retry on network-ish failures
-                    lowered = (last_error or "").lower()
-                    transient = any(
-                        kw in lowered
-                        for kw in ("network", "timeout", "temporar", "http error 5", "connection", "socket", "429", "403")
-                    )
-                    if not transient:
+                    if not _is_transient_download_error(last_error):
                         raise
                     await asyncio.sleep(2)
             self._finish(job)
@@ -273,9 +313,9 @@ class JobManager:
         except CanceledError:
             self._finish(job, cancelled=True)
         except NyaViewError as exc:
-            self._finish(job, error=str(exc))
+            self._finish(job, error=_describe_download_error(str(exc)))
         except Exception as exc:  # defensive: never lose a job silently
-            self._finish(job, error=f"{type(exc).__name__}: {exc}")
+            self._finish(job, error=_describe_download_error(f"{type(exc).__name__}: {exc}"))
 
     async def _run_convert(self, job: Job, source: str, options: dict[str, Any]) -> None:
         settings = self._job_settings(options)

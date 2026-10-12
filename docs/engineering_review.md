@@ -411,3 +411,9 @@ class ProcessTimeoutError(EngineError): ...
    - **修复⑤**：新增**罗马数字**（`I.粘土中的恐怖`）与**中文数字**（`一、初见`）分节标题识别；实测 `克苏鲁的呼唤`、`暗夜呢喃`（`Chapter 1~8`）等 7 本书因此获得了真正的多级目录。
    - **顺带收紧原有正则**：章节标记后**必须跟分隔符**才认定为标题，否则 `第一章说的是另一个故事…` 这类正文会被误判（测试实测暴露）。
    - **实测效果**（真实 165 本）：合并 5 本后目录 = `大衮 / 异乡人 / 记忆 / 克苏鲁的呼唤 →(前言, I., II., III.) / 暗夜呢喃 →(前言, Chapter 1-8)`，**0 个重复书名、0 个"部分"**。新增 5 个测试，全套 **110 测试全绿**。
+31. **西班牙用户报错 `[download] Got error: Downloaded 224660 bytes, expected 50910358 bytes`**：**定位链路**：该消息出自 yt-dlp 的 `ContentTooShortError`（`_utils.py:1162`），由 `downloader/common.py:416` 在**重试次数耗尽**后以 `report_error` 形式报出——即"HTTP 响应只传到 225 KB / 50.9 MB（0.4%）就断了"。
+    - **关键发现（排除了"偶发抖动"）**：yt-dlp 默认 `retries=10` 且 `http.py` 的 `retry()` 会**从磁盘已下载字节数续传**（`os.path.getsize(tmpfilename)`）；既然 10 次尝试累计仍只有 225 KB，说明**每次都几乎立刻被掐断，是持续性链路问题**，而非一次性抖动。
+    - **最可能的原因**：从西班牙到 B 站 CDN 的链路被限速/中断（B 站对境外 IP 的 CDN 调度与部分内容的区域限制是已知情况），也可能叠加了 VPN/代理不稳定。**这是用户侧网络问题，不是程序 bug**。
+    - **顺带查出 NyaView 的一个真 bug**：`queue.py` 的重试判断只匹配 `network/timeout/temporar/connection/socket/429/403` 等关键词，而这条报错的文案是 "Downloaded N bytes, expected M bytes"——**一个关键词都不匹配**，于是被当成"永久性错误"**第一次就放弃**，配置的 3 次重试从未生效。
+    - **修复**：① 重试判断抽成 `_is_transient_download_error()`，关键词覆盖"传输被截断"这一类（`expected` / `content too short` / `incomplete` / `unable to download` / `connection reset` / `broken pipe` / `eof` 等），同时**保持永久性错误（Unsupported URL、private video、需登录）不重试**；② 新增 `resilient` 参数：**第 2 次尝试起**启用 `http_chunk_size=10MiB`（分块下载，每块完成会重置重试计数，长下载抗中断能力大幅提升）、`socket_timeout=45`、显式 `continuedl=True`、`nopart=False`、指数退避——**首次尝试保持 yt-dlp 默认，不影响正常下载**；③ 该错误最终失败时追加可操作提示（境外访问建议代理/换网络/降画质/稍后重试）。
+    - 新增 4 个测试（含用**用户原话**做断言、永久性错误不得被误判为可重试、resilient 仅在第 2 次尝试生效、参数贯通）。全套 **114 测试全绿**。

@@ -117,6 +117,7 @@ class YtDlpEngine:
         outtmpl: Optional[str] = None,
         format_id: Optional[str] = None,
         audio_format: Optional[str] = None,
+        resilient: bool = False,
     ) -> dict[str, Any]:
         opts: dict[str, Any] = {
             # Custom naming template (H) or default "<title>.180B.<ext>".
@@ -181,6 +182,30 @@ class YtDlpEngine:
             opts["merge_output_format"] = "mp4"
         if overwrite:
             opts["overwrites"] = True
+        if resilient:
+            # Used from the second attempt on: the first attempt failed with an
+            # interrupted transfer ("Downloaded N bytes, expected M bytes"), so
+            # make the retry much harder to break.
+            #
+            # * http_chunk_size makes yt-dlp pull the file in chunks and resume
+            #   at the chunk boundary. Each completed chunk resets the retry
+            #   counter (http.py: "except NextFragment: retry.attempt -= 1"), so
+            #   a long download survives repeated interruptions instead of
+            #   burning through the retry budget.
+            # * A longer socket timeout tolerates a slow/stalling CDN, which is
+            #   the usual reason an overseas connection to Bilibili gets cut.
+            # * resumedl keeps whatever was already fetched.
+            opts.setdefault("retries", 10)
+            opts.setdefault("fragment_retries", 10)
+            opts["socket_timeout"] = max(int(opts.get("socket_timeout") or 0), 45)
+            opts["http_chunk_size"] = 10 * 1024 * 1024  # 10 MiB chunks
+            opts["continuedl"] = True
+            opts["nopart"] = False
+            # Some CDNs throttle or drop clients that open several connections at
+            # once, so retry with a single stream.
+            opts["concurrent_fragment_downloads"] = 1
+            # Back off gradually instead of hammering a struggling CDN.
+            opts["retry_sleep_functions"] = {"http": lambda n: min(2 ** n, 30)}
         return opts
 
     def _hook(self, data: dict[str, Any]) -> None:
@@ -227,6 +252,7 @@ class YtDlpEngine:
         outtmpl: Optional[str] = None,
         format_id: Optional[str] = None,
         audio_format: Optional[str] = None,
+        resilient: bool = False,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415 - imported lazily to keep import cost out of CLI path
         from yt_dlp import YoutubeDL
@@ -235,6 +261,7 @@ class YtDlpEngine:
             return self._run_once(
                 url, destination, audio_only, overwrite, YoutubeDL,
                 playlist_items, prefer_h264, write_subs, outtmpl, format_id, audio_format,
+                resilient,
             )
         except yt_dlp.utils.DownloadError as exc:
             message = str(exc)
@@ -257,6 +284,7 @@ class YtDlpEngine:
                     return engine._run_once(
                         url, destination, audio_only, overwrite, YoutubeDL,
                         playlist_items, prefer_h264, write_subs, outtmpl, format_id, audio_format,
+                        resilient,
                     )
                 except yt_dlp.utils.DownloadError as retry_exc:
                     raise DownloadError(str(retry_exc)) from retry_exc
@@ -275,6 +303,7 @@ class YtDlpEngine:
         outtmpl: Optional[str] = None,
         format_id: Optional[str] = None,
         audio_format: Optional[str] = None,
+        resilient: bool = False,
     ) -> Path:
         import yt_dlp.utils  # noqa: PLC0415
 
@@ -288,6 +317,7 @@ class YtDlpEngine:
             outtmpl=outtmpl,
             format_id=format_id,
             audio_format=audio_format,
+            resilient=resilient,
         )
         try:
             with ydl_cls(opts) as ydl:
@@ -342,6 +372,7 @@ class YtDlpEngine:
         outtmpl: Optional[str] = None,
         format_id: Optional[str] = None,
         audio_format: Optional[str] = None,
+        resilient: bool = False,
     ) -> Path:
         destination = Path(destination).expanduser().resolve()
         destination.mkdir(parents=True, exist_ok=True)
@@ -359,6 +390,7 @@ class YtDlpEngine:
             outtmpl,
             format_id,
             audio_format,
+            resilient,
         )
 
     async def preview(self, url: str, prefer_h264: bool = True) -> dict[str, Any]:

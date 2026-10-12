@@ -131,7 +131,7 @@ def test_run_falls_back_when_cookie_db_locked(monkeypatch) -> None:
 
     def fake_run_once(self, url, destination, audio_only, overwrite, ydl_cls,
                       playlist_items=None, prefer_h264=True, write_subs=False,
-                      outtmpl=None, format_id=None, audio_format=None):
+                      outtmpl=None, format_id=None, audio_format=None, resilient=False):
         calls.append(str(self.settings.cookies_from_browser))
         if self.settings.cookies_from_browser:
             raise yt_dlp.utils.DownloadError(
@@ -196,3 +196,81 @@ def test_locate_output_raises_when_nothing(tmp_path: Path) -> None:
     except DownloadError:
         return
     raise AssertionError("expected DownloadError")
+
+
+# ------------------------------------------------ interrupted transfers
+
+def test_incomplete_download_is_treated_as_transient() -> None:
+    """A Spanish user hit:
+       ERROR: [download] Got error: Downloaded 224660 bytes, expected 50910358 bytes
+    (yt-dlp ContentTooShortError). It is a transient network failure, but it
+    matched none of the old keywords, so NyaView gave up on the first attempt
+    and never used its configured retries."""
+    from nyavview.ui.queue import _is_transient_download_error
+
+    assert _is_transient_download_error(
+        "ERROR: [download] Got error: Downloaded 224660 bytes, expected 50910358 bytes"
+    )
+    assert _is_transient_download_error("content too short (expected 100 and served 20)")
+    assert _is_transient_download_error("('Connection aborted.', ConnectionResetError(10054))")
+    assert _is_transient_download_error("HTTP Error 503: Service Unavailable")
+    assert _is_transient_download_error("The read operation timed out")
+    # permanent failures must still be permanent
+    assert not _is_transient_download_error("Unsupported URL: https://example.com/x")
+    assert not _is_transient_download_error("This video is private")
+    assert not _is_transient_download_error("Sign in to confirm you're not a bot")
+
+
+def test_incomplete_download_error_carries_an_actionable_hint() -> None:
+    from nyavview.ui.queue import _describe_download_error
+
+    message = "ERROR: [download] Got error: Downloaded 224660 bytes, expected 50910358 bytes"
+    described = _describe_download_error(message)
+    assert described.startswith(message)
+    assert len(described) > len(message)
+    assert "网络" in described
+    # unrelated errors are left untouched
+    assert _describe_download_error("This video is private") == "This video is private"
+
+
+def test_opts_resilient_only_applies_from_the_second_attempt() -> None:
+    """The first attempt keeps yt-dlp's defaults; a retry switches to chunked,
+    resumable downloading with a longer socket timeout."""
+    engine = YtDlpEngine(Settings())
+    destination = Path("downloads")
+
+    plain = engine._opts(destination, audio_only=False, overwrite=False)
+    for key in ("http_chunk_size", "socket_timeout", "retry_sleep_functions"):
+        assert key not in plain, key
+
+    retry = engine._opts(destination, audio_only=False, overwrite=False, resilient=True)
+    assert retry["http_chunk_size"] == 10 * 1024 * 1024
+    assert retry["socket_timeout"] >= 45
+    assert retry["continuedl"] is True
+    assert retry["nopart"] is False
+    assert retry["retries"] >= 10
+    # a struggling CDN is retried with a single connection
+    assert retry["concurrent_fragment_downloads"] == 1
+    assert callable(retry["retry_sleep_functions"]["http"])
+    # backoff must grow but stay bounded
+    sleep = retry["retry_sleep_functions"]["http"]
+    assert sleep(1) <= sleep(3) <= 30
+
+
+def test_download_forwards_resilient_to_the_engine(monkeypatch) -> None:
+    """queue.py must pass resilient=True on retries; check the plumbing."""
+    import asyncio
+
+    engine = YtDlpEngine(Settings())
+    seen: dict = {}
+
+    def fake_run(url, destination, audio_only, overwrite, playlist_items=None,
+                 prefer_h264=True, write_subs=False, outtmpl=None, format_id=None,
+                 audio_format=None, resilient=False):
+        seen["resilient"] = resilient
+        return Path(destination) / "out.mp4"
+
+    monkeypatch.setattr(engine, "_run", fake_run)
+    result = asyncio.run(engine.download("https://example.com/v", Path("downloads"), resilient=True))
+    assert seen["resilient"] is True
+    assert result.name == "out.mp4"
